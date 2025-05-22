@@ -1,6 +1,8 @@
 <?php
 // Cargar dependencias (solo PHPMailer para el envío de correos)
 require 'vendor/autoload.php'; 
+// Incluir archivo de configuración de la base de datos
+require_once __DIR__ . '/db_moodle_config.php';
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
@@ -24,7 +26,11 @@ $fecha_fin = $lunes->format('Y-m-d 23:59:59');
 
 try {
     // Conexión a la base de datos PostgreSQL
-    $pdo = new PDO("pgsql:host=$host;dbname=$dbname", $user, $pass);
+    $pdo = new PDO(
+        "pgsql:host=".DB_HOST.";dbname=".DB_NAME.";port=".DB_PORT, 
+        DB_USER, 
+        DB_PASS
+    );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     // Consulta SQL

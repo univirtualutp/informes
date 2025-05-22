@@ -1,5 +1,7 @@
 <?php
-require 'vendor/autoload.php'; 
+require 'vendor/autoload.php';
+// Incluir archivo de configuración de la base de datos
+require_once __DIR__ . '/db_moodle_config.php';
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
@@ -19,7 +21,11 @@ $fecha_inicio = $fecha_inicio_fija->format('Y-m-d 00:00:00');
 $fecha_fin = $lunes->format('Y-m-d 23:59:59');
 
 try {
-    $pdo = new PDO("pgsql:host=$host;dbname=$dbname", $user, $pass);
+    $pdo = new PDO(
+        "pgsql:host=".DB_HOST.";dbname=".DB_NAME.";port=".DB_PORT, 
+        DB_USER, 
+        DB_PASS
+    );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     $sql = "SELECT DISTINCT

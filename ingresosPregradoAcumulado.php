@@ -1,8 +1,12 @@
 <?php
 // Configuración inicial
 date_default_timezone_set('America/Bogota');
+
 // Autoload de Composer
 require __DIR__ . '/vendor/autoload.php';
+
+// Incluir archivo de configuración de la base de datos
+require_once __DIR__ . '/db_moodle_config.php';
 
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
@@ -12,14 +16,6 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 // =============================================
 // CONFIGURACIÓN
 // =============================================
-$db_config = [
-    'host' => 'localhost',
-    'name' => 'moodle',
-    'user' => 'moodle',
-    'pass' => 'M00dl3',
-    'port' => '5432'
-];
-
 $correo_destino = ['soporteunivirtual@utp.edu.co','univirtual-utp@utp.edu.co'];
 $correo_notificacion = 'soporteunivirtual@utp.edu.co';
 $remitente = 'noreply-univirtual@utp.edu.co';
@@ -56,9 +52,9 @@ $temp_general = 'general_' . $fecha_para_nombre . '.xlsx';
 $zip_file = 'reporte_asignaturas_pregrado_' . $fecha_para_nombre . '.zip';
 
 try {
-    // Conexión a la base de datos
-    $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['name']}";
-    $db = new PDO($dsn, $db_config['user'], $db_config['pass']);
+    // Conexión a la base de datos usando constantes del archivo de configuración
+    $dsn = "pgsql:host=".DB_HOST.";port=".DB_PORT.";dbname=".DB_NAME;
+    $db = new PDO($dsn, DB_USER, DB_PASS);
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $db->exec("SET TIME ZONE 'America/Bogota'");
 

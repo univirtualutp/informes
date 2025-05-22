@@ -1,14 +1,13 @@
 <?php
 // Cargar dependencias (solo PHPMailer para el envío de correos)
 require 'vendor/autoload.php'; 
+// Incluir archivo de configuración de la base de datos
+require_once __DIR__ . '/db_moodle_config.php';
+
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-// Configuración de la base de datos y correos
-$host = 'localhost';
-$dbname = 'moodle';
-$user = 'moodle';
-$pass = 'M00dl3';
+// Configuración de correos
 $correo_destino = ['soporteunivirtual@utp.edu.co', 'univirtual-utp@utp.edu.co'];
 $correo_notificacion = 'soporteunivirtual@utp.edu.co';
 
@@ -23,11 +22,15 @@ $fecha_inicio = $martes->format('Y-m-d 00:00:00');
 $fecha_fin = $lunes->format('Y-m-d 23:59:59');
 
 try {
-    // Conexión a la base de datos PostgreSQL
-    $pdo = new PDO("pgsql:host=$host;dbname=$dbname", $user, $pass);
+    // Conexión a la base de datos PostgreSQL usando constantes definidas
+    $pdo = new PDO(
+        "pgsql:host=".DB_HOST.";dbname=".DB_NAME.";port=".DB_PORT, 
+        DB_USER, 
+        DB_PASS
+    );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // Consulta SQL
+    // Resto del código permanece igual...
     $sql = "WITH AllDays AS (
         SELECT generate_series(
             :fecha_inicio::timestamp,
@@ -232,7 +235,7 @@ try {
         ':fecha_fin' => $fecha_fin
     ];
 
-    $stmt->execute($params); // Pasar los parámetros aquí
+    $stmt->execute($params);
     $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Función para reemplazar valores nulos o vacíos con 0
@@ -335,4 +338,3 @@ try {
     mail($correo_notificacion, 'Error Reporte', 'Error: ' . $e->getMessage());
     echo "Error: " . $e->getMessage(); // Mostrar el error en la consola
 }
-?>
