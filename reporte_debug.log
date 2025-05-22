@@ -1,0 +1,36 @@
+Inicio: 2025-05-15 16:00:29
+Periodo: 2025-05-06 a 2025-05-12
+Configuración:
+Array
+(
+    [host] => localhost
+    [name] => moodle
+    [user] => moodle
+    [pass] => M00dl3
+    [port] => 5432
+)
+
+Inicio: 2025-05-15 16:14:11
+Periodo: 2025-05-06 a 2025-05-12
+Configuración:
+Array
+(
+    [host] => localhost
+    [name] => moodle
+    [user] => moodle
+    [pass] => M00dl3
+    [port] => 5432
+)
+
+Inicio: 2025-05-15 16:18:22
+Periodo: 2025-05-06 a 2025-05-12
+Configuración:
+Array
+(
+    [host] => localhost
+    [name] => moodle
+    [user] => moodle
+    [pass] => M00dl3
+    [port] => 5432
+)
+

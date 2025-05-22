@@ -1,0 +1,116 @@
+Fecha inicio: 2025-05-06 00:00:00
+Fecha fin: 2025-05-12 23:59:59
+Cursos: 494','415','507','481','508','482','509','485','526','510','511','486','490','416','503','504','527','417','496','497','418','498','419','475','421','420','422','423','512','513','515','488','489','424','516','517','491','518','492','519','493','520','425','476','426','505','506','479','521','428','430','522','495','499','431','453','500','523','434','524','435','436','437','438','440','502','439','452','525','442
+Consulta SQL:
+
+    WITH AllDays AS (
+      SELECT generate_series(
+        timestamp '2025-05-06 00:00:00',
+        timestamp '2025-05-12 23:59:59',
+        interval '1 day'
+      )::DATE AS fecha
+    ),
+    UserCourseAccess AS (
+      SELECT 
+        u.id AS userid,
+        c.id AS courseid,
+        COUNT(DISTINCT CAST(to_timestamp(mlsl.timecreated) AT TIME ZONE 'America/Bogota' AS DATE)) AS access_days
+      FROM mdl_user u
+      JOIN mdl_role_assignments mra ON mra.userid = u.id
+      JOIN mdl_role mr ON mra.roleid = mr.id
+      JOIN mdl_context mc ON mc.id = mra.contextid
+      JOIN mdl_course c ON c.id = mc.instanceid
+      LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
+        AND mlsl.userid = u.id
+        AND mlsl.action = 'viewed'
+        AND mlsl.target IN ('course', 'course_module')
+        AND CAST(to_timestamp(mlsl.timecreated) AT TIME ZONE 'America/Bogota' AS DATE) BETWEEN '2025-05-06' AND '2025-05-12'
+      WHERE mc.contextlevel = 50
+        AND u.username NOT IN ('12345678')
+        AND c.id IN ('494','415','507','481','508','482','509','485','526','510','511','486','490','416','503','504','527','417','496','497','418','498','419','475','421','420','422','423','512','513','515','488','489','424','516','517','491','518','492','519','493','520','425','476','426','505','506','479','521','428','430','522','495','499','431','453','500','523','434','524','435','436','437','438','440','502','439','452','525','442')
+        AND mr.id IN ('3','5','9','11','16','17')
+      GROUP BY u.id, c.id
+    )
+    SELECT 
+      u.username AS codigo,
+      mr.name AS rol_nombre,
+      u.firstname AS nombre,
+      u.lastname AS apellidos,
+      u.email AS correo,
+      c.fullname AS curso,
+      COALESCE(uca.access_days, 0) AS total_ingresos
+    FROM mdl_user u
+    JOIN mdl_role_assignments mra ON mra.userid = u.id
+    JOIN mdl_role mr ON mra.roleid = mr.id
+    JOIN mdl_context mc ON mc.id = mra.contextid
+    JOIN mdl_course c ON c.id = mc.instanceid
+    LEFT JOIN UserCourseAccess uca ON uca.userid = u.id AND uca.courseid = c.id
+    WHERE mc.contextlevel = 50
+      AND u.username NOT IN ('12345678')
+      AND c.id IN ('494','415','507','481','508','482','509','485','526','510','511','486','490','416','503','504','527','417','496','497','418','498','419','475','421','420','422','423','512','513','515','488','489','424','516','517','491','518','492','519','493','520','425','476','426','505','506','479','521','428','430','522','495','499','431','453','500','523','434','524','435','436','437','438','440','502','439','452','525','442')
+      AND mr.id IN ('3','5','9','11','16','17')
+    GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.id, mr.name, uca.access_days
+    ORDER BY c.fullname, u.lastname, u.firstname
+Roles encontrados: Estudiante, Asesor Sistema de Apoyo, Estudiante Desmatriculado, Estudiante Curso Dirigido, Profesor, Estudiante Movilidad
+Número de profesores: 0
+Número de estudiantes: 2218
+Fecha de ejecución: 2025-05-14 16:44:53
+Fecha inicio: 2025-05-06 00:00:00
+Fecha fin: 2025-05-12 23:59:59
+Cursos: 494','415','507','481','508','482','509','485','526','510','511','486','490','416','503','504','527','417','496','497','418','498','419','475','421','420','422','423','512','513','515','488','489','424','516','517','491','518','492','519','493','520','425','476','426','505','506','479','521','428','430','522','495','499','431','453','500','523','434','524','435','436','437','438','440','502','439','452','525','442
+Consulta SQL:
+
+    WITH AllDays AS (
+      SELECT generate_series(
+        timestamp '2025-05-06 00:00:00',
+        timestamp '2025-05-12 23:59:59',
+        interval '1 day'
+      )::DATE AS fecha
+    ),
+    UserCourseAccess AS (
+      SELECT 
+        u.id AS userid,
+        c.id AS courseid,
+        COUNT(DISTINCT CAST(to_timestamp(mlsl.timecreated) AT TIME ZONE 'America/Bogota' AS DATE)) AS access_days,
+        STRING_AGG(DISTINCT CAST(to_timestamp(mlsl.timecreated) AT TIME ZONE 'America/Bogota' AS DATE)::TEXT, ',') AS access_dates
+      FROM mdl_user u
+      JOIN mdl_role_assignments mra ON mra.userid = u.id
+      JOIN mdl_role mr ON mra.roleid = mr.id
+      JOIN mdl_context mc ON mc.id = mra.contextid
+      JOIN mdl_course c ON c.id = mc.instanceid
+      LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
+        AND mlsl.userid = u.id
+        AND mlsl.action = 'viewed'
+        AND mlsl.target = 'course' -- Ajustado para coincidir con Total Ingresos
+        AND CAST(to_timestamp(mlsl.timecreated) AT TIME ZONE 'America/Bogota' AS DATE) BETWEEN '2025-05-06' AND '2025-05-12'
+      WHERE mc.contextlevel = 50
+        AND u.username NOT IN ('12345678')
+        AND c.id IN ('494','415','507','481','508','482','509','485','526','510','511','486','490','416','503','504','527','417','496','497','418','498','419','475','421','420','422','423','512','513','515','488','489','424','516','517','491','518','492','519','493','520','425','476','426','505','506','479','521','428','430','522','495','499','431','453','500','523','434','524','435','436','437','438','440','502','439','452','525','442')
+        AND mr.id IN ('3','5','9','11','16','17')
+      GROUP BY u.id, c.id
+    )
+    SELECT 
+      u.username AS codigo,
+      mr.name AS rol_nombre,
+      u.firstname AS nombre,
+      u.lastname AS apellidos,
+      u.email AS correo,
+      c.fullname AS curso,
+      COALESCE(uca.access_days, 0) AS total_ingresos,
+      uca.access_dates AS access_dates
+    FROM mdl_user u
+    JOIN mdl_role_assignments mra ON mra.userid = u.id
+    JOIN mdl_role mr ON mra.roleid = mr.id
+    JOIN mdl_context mc ON mc.id = mra.contextid
+    JOIN mdl_course c ON c.id = mc.instanceid
+    LEFT JOIN UserCourseAccess uca ON uca.userid = u.id AND uca.courseid = c.id
+    WHERE mc.contextlevel = 50
+      AND u.username NOT IN ('12345678')
+      AND c.id IN ('494','415','507','481','508','482','509','485','526','510','511','486','490','416','503','504','527','417','496','497','418','498','419','475','421','420','422','423','512','513','515','488','489','424','516','517','491','518','492','519','493','520','425','476','426','505','506','479','521','428','430','522','495','499','431','453','500','523','434','524','435','436','437','438','440','502','439','452','525','442')
+      AND mr.id IN ('3','5','9','11','16','17')
+    GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.id, mr.name, uca.access_days, uca.access_dates
+    ORDER BY c.fullname, u.lastname, u.firstname
+Roles encontrados: Estudiante, Asesor Sistema de Apoyo, Estudiante Desmatriculado, Estudiante Curso Dirigido, Profesor, Estudiante Movilidad
+Número de profesores: 0
+Número de estudiantes: 2218
+Discrepancias encontradas: 1043
