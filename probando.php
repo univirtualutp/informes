@@ -4,7 +4,9 @@ date_default_timezone_set('America/Bogota');
 
 // Autoload de Composer
 require __DIR__ . '/vendor/autoload.php';
-require_once ' db_moodle_config.php';
+
+// Incluir archivo de configuración de la base de datos
+require_once __DIR__ . '/db_moodle_config.php';
 
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
@@ -14,15 +16,7 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 // =============================================
 // CONFIGURACIÓN
 // =============================================
-/*$db_config = [
-    'host' => 'localhost',
-    'name' => 'moodle',
-    'user' => 'moodle',
-    'pass' => 'M00dl3',
-    'port' => '5432'
-];*/
-
-$correo_destino = ['soporteunivirtual@utp.edu.co','univirtual-utp@utp.edu.co'];
+$correo_destino = ['soporteunivirtual@utp.edu.co'];
 $correo_notificacion = 'soporteunivirtual@utp.edu.co';
 $remitente = 'noreply-univirtual@utp.edu.co';
 
@@ -51,8 +45,8 @@ $zip_file = 'reporte_asignaturas_pregrado_' . $fecha_para_nombre . '.zip';
 
 try {
     // Conexión a la base de datos
-    $dsn = "pgsql:host={$db_config['host']};port={$db_config['port']};dbname={$db_config['name']}";
-    $db = new PDO($dsn, $db_config['user'], $db_config['pass']);
+    $dsn = "pgsql:host=".DB_HOST.";port=".DB_PORT.";dbname=".DB_NAME;
+    $db = new PDO($dsn, DB_USER, DB_PASS);
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $db->exec("SET TIME ZONE 'America/Bogota'");
 
@@ -352,70 +346,70 @@ ORDER BY c.fullname, u.lastname, u.firstname";
 
     $general = $resultados; // Todos los registros
 
-function generarArchivoProduccion($datos, $nombreArchivo, $tituloHoja) {
-    $spreadsheet = new Spreadsheet();
-    $sheet = $spreadsheet->getActiveSheet();
-    $sheet->setTitle($tituloHoja);
-    
-    // ENCABEZADOS ACTUALIZADOS CON ROL EN LA POSICIÓN CORRECTA
-    $headers = [
-        'Código', 
-        'Nombre', 
-        'Apellido', 
-        'Rol',
-        'Correo', 
-        'ID Curso', 
-        'Curso', 
-        'Mensajes Enviados', 
-        'Mensajes Recibidos', 
-        'Mensajes Sin Leer',
-        'Último Mensaje Enviado',
-        'Último Mensaje Recibido',
-        'Último Mensaje Leído',
-        'Último Mensaje Enviado A',
-        'Último Mensaje Leído De'
-    ];
-    
-    $sheet->fromArray($headers, null, 'A1');
-    
-    // Datos
-    $row = 2;
-    foreach ($datos as $item) {
-        $sheet->setCellValue('A' . $row, $item['codigo']);
-        $sheet->setCellValue('B' . $row, $item['nombre']);
-        $sheet->setCellValue('C' . $row, $item['apellido']);
-        $sheet->setCellValue('D' . $row, $item['rol']);
-        $sheet->setCellValue('E' . $row, $item['correo']);
-        $sheet->setCellValue('F' . $row, $item['id_curso']);
-        $sheet->setCellValue('G' . $row, $item['curso']);
+    function generarArchivoProduccion($datos, $nombreArchivo, $tituloHoja) {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle($tituloHoja);
         
-        // Forzar valores numéricos para los contadores
-        $sheet->setCellValueExplicit('H' . $row, $item['mensajes_enviados'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
-        $sheet->setCellValueExplicit('I' . $row, $item['mensajes_recibidos'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
-        $sheet->setCellValueExplicit('J' . $row, $item['mensajes_sin_leer'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
+        // ENCABEZADOS ACTUALIZADOS CON ROL EN LA POSICIÓN CORRECTA
+        $headers = [
+            'Código', 
+            'Nombre', 
+            'Apellido', 
+            'Rol',
+            'Correo', 
+            'ID Curso', 
+            'Curso', 
+            'Mensajes Enviados', 
+            'Mensajes Recibidos', 
+            'Mensajes Sin Leer',
+            'Último Mensaje Enviado',
+            'Último Mensaje Recibido',
+            'Último Mensaje Leído',
+            'Último Mensaje Enviado A',
+            'Último Mensaje Leído De'
+        ];
         
-        // Resto de campos
-        $sheet->setCellValue('K' . $row, $item['ultimo_mensaje_enviado']);
-        $sheet->setCellValue('L' . $row, $item['ultimo_mensaje_recibido']);
-        $sheet->setCellValue('M' . $row, $item['ultimo_mensaje_leido']);
-        $sheet->setCellValue('N' . $row, $item['ultimo_mensaje_enviado_a']);
-        $sheet->setCellValue('O' . $row, $item['ultimo_mensaje_leido_de']);
+        $sheet->fromArray($headers, null, 'A1');
         
-        $row++;
+        // Datos
+        $row = 2;
+        foreach ($datos as $item) {
+            $sheet->setCellValue('A' . $row, $item['codigo']);
+            $sheet->setCellValue('B' . $row, $item['nombre']);
+            $sheet->setCellValue('C' . $row, $item['apellido']);
+            $sheet->setCellValue('D' . $row, $item['rol']);
+            $sheet->setCellValue('E' . $row, $item['correo']);
+            $sheet->setCellValue('F' . $row, $item['id_curso']);
+            $sheet->setCellValue('G' . $row, $item['curso']);
+            
+            // Forzar valores numéricos para los contadores
+            $sheet->setCellValueExplicit('H' . $row, $item['mensajes_enviados'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
+            $sheet->setCellValueExplicit('I' . $row, $item['mensajes_recibidos'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
+            $sheet->setCellValueExplicit('J' . $row, $item['mensajes_sin_leer'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
+            
+            // Resto de campos
+            $sheet->setCellValue('K' . $row, $item['ultimo_mensaje_enviado']);
+            $sheet->setCellValue('L' . $row, $item['ultimo_mensaje_recibido']);
+            $sheet->setCellValue('M' . $row, $item['ultimo_mensaje_leido']);
+            $sheet->setCellValue('N' . $row, $item['ultimo_mensaje_enviado_a']);
+            $sheet->setCellValue('O' . $row, $item['ultimo_mensaje_leido_de']);
+            
+            $row++;
+        }
+        
+        // Formatear columnas numéricas
+        $sheet->getStyle('H2:J' . ($row - 1))
+              ->getNumberFormat()
+              ->setFormatCode('0'); // Formato numérico sin decimales
+        
+        // Autoajustar el ancho de las columnas
+        foreach (range('A', 'O') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+        
+        (new Xlsx($spreadsheet))->save($nombreArchivo);
     }
-    
-    // Formatear columnas numéricas
-    $sheet->getStyle('H2:J' . ($row - 1))
-          ->getNumberFormat()
-          ->setFormatCode('0'); // Formato numérico sin decimales
-    
-    // Autoajustar el ancho de las columnas
-    foreach (range('A', 'O') as $col) {
-        $sheet->getColumnDimension($col)->setAutoSize(true);
-    }
-    
-    (new Xlsx($spreadsheet))->save($nombreArchivo);
-}
 
     // Generar archivos
     generarArchivoProduccion($profesores, $temp_profesores, 'Profesores');

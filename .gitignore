@@ -1,6 +1,8 @@
 
-
-# Agrega el archivo de configuración al .gitignore
-echo "db_moodle_config.php.*" >> .gitignore
-echo "*.ini" >> .gitignore  # Opcional: excluir todos los .ini si lo prefieres
-
+# Excluir archivos de configuración sensible
+db_moodle_config.php
+*.ini
+*.env
+/config.php
+/secrets/
+.DS_Store
