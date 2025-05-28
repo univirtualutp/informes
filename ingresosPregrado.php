@@ -1,4 +1,6 @@
 <?php
+// Configuración inicial
+date_default_timezone_set('America/Bogota');
 // Cargar dependencias (solo PHPMailer para el envío de correos)
 require 'vendor/autoload.php'; 
 // Incluir archivo de configuración de la base de datos
@@ -10,6 +12,11 @@ use PHPMailer\PHPMailer\Exception;
 // Configuración de correos
 $correo_destino = ['soporteunivirtual@utp.edu.co', 'univirtual-utp@utp.edu.co'];
 $correo_notificacion = 'soporteunivirtual@utp.edu.co';
+// Correo para pruebas
+$correo_pruebas = 'daniel.pardo@utp.edu.co';
+
+// Modo prueba (cambiar a false para producción)
+$modo_prueba = true;
 
 // Calcular fechas (martes a lunes)
 $hoy = new DateTime();
@@ -17,9 +24,10 @@ $lunes = clone $hoy;
 $lunes->modify('last monday');
 $martes = clone $lunes;
 $martes->modify('-6 days');
-
 $fecha_inicio = $martes->format('Y-m-d 00:00:00');
 $fecha_fin = $lunes->format('Y-m-d 23:59:59');
+
+$cursos = [494, 415, 507, 481, 508, 482, 509, 485, 526, 510, 511, 486, 490, 416, 503, 504, 527, 417, 496, 497, 418, 498, 419, 475, 421, 420, 422, 423, 512, 513, 515, 488, 489, 424, 516, 517, 491, 518, 492, 519, 493, 520, 425, 476, 426, 505, 506, 479, 521, 428, 430, 522, 495, 499, 431, 453, 500, 523, 434, 524, 435, 436, 437, 438, 440, 502, 439, 452, 525, 442];
 
 try {
     // Conexión a la base de datos PostgreSQL usando constantes definidas
@@ -30,210 +38,72 @@ try {
     );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // Resto del código permanece igual...
+    // Crear parámetros nombrados para los cursos
+    $cursos_params = [];
+    foreach ($cursos as $i => $curso_id) {
+        $cursos_params[":curso_$i"] = $curso_id;
+    }
+    $cursos_in = implode(',', array_keys($cursos_params));
+
     $sql = "WITH AllDays AS (
-        SELECT generate_series(
+      SELECT generate_series(
             :fecha_inicio::timestamp,
             :fecha_fin::timestamp,
             interval '1 day'
         )::DATE AS fecha
     ),
-    CourseLog AS (
-        SELECT 
-            u.id AS userid,
-            c.id AS courseid,
-            COUNT(DISTINCT DATE_TRUNC('day', to_timestamp(l.timecreated))) AS dias_activos,
-            COUNT(DISTINCT l.id) AS ingresos_totales
-        FROM mdl_logstore_standard_log AS l
-        JOIN mdl_user AS u ON l.userid = u.id
-        JOIN mdl_context AS ctx ON l.contextid = ctx.id
-        JOIN mdl_course AS c ON ctx.instanceid = c.id
-        WHERE 
-            l.action = 'viewed' 
-            AND l.target IN ('course', 'course_module')
-            AND l.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        GROUP BY u.id, c.id
+    UserCourseDays AS (
+      SELECT 
+        u.id AS userid,
+        c.id AS courseid,
+        mr.name AS rol,
+        mr.id AS roleid,
+        COUNT(DISTINCT CASE WHEN mlsl.id IS NOT NULL THEN ad.fecha END) AS total_ingresos
+      FROM mdl_user u
+      CROSS JOIN AllDays ad
+      LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+      LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+      LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+      LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+      LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
+        AND mlsl.userid = u.id
+        AND mlsl.action = 'viewed'
+        AND mlsl.target IN ('course', 'course_module')
+        AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
+      WHERE mc.contextlevel = 50
+        AND u.username NOT IN ('12345678')
+        AND c.id IN ($cursos_in)
+      GROUP BY u.id, c.id, mr.id
     )
-    SELECT DISTINCT
-        u.username AS codigo,
-        u.firstname AS nombre,
-        u.lastname AS apellidos,
-        r.id AS rol_id,
-        r.name AS rol,
-        u.email AS correo,
-        c.id AS id_curso,
-        c.fullname AS curso,
-        COALESCE(cl.dias_activos, 0) AS ingresos,
-        COALESCE(cl.ingresos_totales, 0) AS interacciones_en_aula,
-        COALESCE((
-            SELECT COUNT(DISTINCT m.id)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON mcm.userid = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE m.useridfrom = u.id
-            AND u.username <> '12345678'
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), 0) AS mensajes_enviados,
-        COALESCE((
-            SELECT COUNT(DISTINCT m.id)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), 0) AS mensajes_recibidos,
-        COALESCE((
-            SELECT COUNT(DISTINCT m.id)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            LEFT JOIN mdl_message_user_actions mua ON m.id = mua.messageid AND mua.userid = u.id AND mua.action = 1
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND mua.id IS NULL
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), 0) AS mensajes_sin_leer,
-        COALESCE((
-            SELECT TO_TIMESTAMP(MAX(m.timecreated))
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON mcm.userid = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE m.useridfrom = u.id
-            AND u.username <> '12345678'
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), NULL) AS ultimo_mensaje_enviado,
-        COALESCE((
-            SELECT TO_TIMESTAMP(MAX(m.timecreated))
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), NULL) AS ultimo_mensaje_recibido,
-        COALESCE((
-            SELECT TO_TIMESTAMP(MAX(m.timecreated))
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            JOIN mdl_message_user_actions mua ON m.id = mua.messageid AND mua.userid = u.id AND mua.action = 1
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), NULL) AS ultimo_mensaje_leido,
-        COALESCE((
-            SELECT CONCAT(u2.firstname, ' ', u2.lastname)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON mcm.userid = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE m.useridfrom = u.id
-            AND u.username <> '12345678'
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-            AND m.timecreated = (
-                SELECT MAX(m2.timecreated)
-                FROM mdl_messages m2
-                JOIN mdl_message_conversations mc2 ON m2.conversationid = mc2.id
-                JOIN mdl_message_conversation_members mcm2 ON mc2.id = mcm2.conversationid
-                JOIN mdl_user u3 ON mcm2.userid = u3.id AND u3.id != u.id
-                JOIN mdl_role_assignments ra3 ON u3.id = ra3.userid
-                JOIN mdl_context ctx3 ON ra3.contextid = ctx3.id AND ctx3.contextlevel = 50
-                WHERE m2.useridfrom = u.id
-                AND ctx3.instanceid = c.id
-                AND ra3.roleid IN (5, 11, 16, 17)
-                AND m2.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-            )
-            LIMIT 1
-        ), NULL) AS ultimo_mensaje_enviado_a,
-        COALESCE((
-            SELECT CONCAT(u2.firstname, ' ', u2.lastname)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            JOIN mdl_message_user_actions mua ON m.id = mua.messageid AND mua.userid = u.id AND mua.action = 1
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated = (
-                SELECT MAX(m2.timecreated)
-                FROM mdl_messages m2
-                JOIN mdl_message_conversations mc2 ON m2.conversationid = mc2.id
-                JOIN mdl_message_conversation_members mcm2 ON mc2.id = mcm2.conversationid
-                JOIN mdl_user u3 ON m2.useridfrom = u3.id AND u3.id != u.id
-                JOIN mdl_role_assignments ra3 ON u3.id = ra3.userid
-                JOIN mdl_context ctx3 ON ra3.contextid = ctx3.id AND ctx3.contextlevel = 50
-                JOIN mdl_message_user_actions mua2 ON m2.id = mua2.messageid AND mua2.userid = u.id AND mua2.action = 1
-                WHERE mcm2.userid = u.id
-                AND ctx3.instanceid = c.id
-                AND ra3.roleid IN (5, 11, 16, 17)
-                AND m2.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-            )
-            LIMIT 1
-        ), NULL) AS ultimo_mensaje_leido_de
+    SELECT 
+      u.username AS codigo,
+      u.firstname AS nombre,
+      u.lastname AS apellidos,
+      u.email AS correo,
+      c.fullname AS curso,
+      mr.name AS rol,
+      mr.id AS rol_id,
+      COALESCE(ucd.total_ingresos, 0) AS total_ingresos
     FROM mdl_user u
-    JOIN mdl_role_assignments ra ON ra.userid = u.id
-    JOIN mdl_role r ON ra.roleid = r.id 
-    JOIN mdl_context mc ON ra.contextid = mc.id
-    JOIN mdl_course c ON mc.instanceid = c.id
-    LEFT JOIN CourseLog cl ON cl.userid = u.id AND cl.courseid = c.id
+    LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+    LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+    LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+    LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+    LEFT JOIN UserCourseDays ucd ON ucd.userid = u.id AND ucd.courseid = c.id AND ucd.roleid = mr.id
     WHERE mc.contextlevel = 50
-      AND u.username <> '12345678'
-      AND c.id IN ('494','415','507','481','508','482','509','485','526','510','511','486','490','416','503','504','527','417','496','497','418','498','419','475','421','420','422','423','512','513','515','488','489','424','516','517','491','518','492','519','493','520','425','476','426','505','506','479','521','428','430','522','495','499','431','453','500','523','434','524','435','436','437','438','440','502','439','452','525','442')
-      AND r.id IN ('3','5','9','16','17')
-    ORDER BY c.fullname, u.lastname, u.firstname;";
+      AND u.username NOT IN ('12345678')
+      AND c.id IN ($cursos_in)
+    GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.name, mr.id, ucd.total_ingresos
+    ORDER BY c.fullname, u.lastname, u.firstname";
 
     // Preparar y ejecutar la consulta
     $stmt = $pdo->prepare($sql);
 
-    // Verificar que los parámetros estén correctamente definidos
+    // Combinar todos los parámetros
     $params = [
-        ':fecha_inicio' => $fecha_inicio,
+        ':fecha_inicio' => $fecha_inicio, 
         ':fecha_fin' => $fecha_fin
-    ];
+    ] + $cursos_params + $cursos_params; // Duplicamos para los dos IN clauses
 
     $stmt->execute($params);
     $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -248,7 +118,7 @@ try {
     // Aplicar la función a cada fila de resultados
     $resultados = array_map('replaceEmptyWithZero', $resultados);
 
-    // Separar resultados en estudiantes (roles 5, 9, 16) y profesores (rol 3)
+    // Separar resultados en estudiantes (roles 5, 9, 16, 17) y profesores (rol 3)
     $estudiantes = array_values(array_filter($resultados, function($fila) {
         return in_array($fila['rol_id'], [5, 9, 16, 17]);
     }));
@@ -310,14 +180,26 @@ try {
     // Configurar y enviar correo con PHPMailer
     $mail = new PHPMailer(true);
     $mail->setFrom('noreply-univirtual@utp.edu.co', 'Reporte Moodle');
-    foreach ($correo_destino as $correo) {
-        $mail->addAddress($correo);
+    
+    if ($modo_prueba) {
+        // En modo prueba solo se envía al correo de pruebas
+        $mail->addAddress($correo_pruebas);
+        $mail->Subject = '[PRUEBA] Reporte de Ingresos y Mensajes Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
+    } else {
+        // En modo producción se envía a los destinatarios reales
+        foreach ($correo_destino as $correo) {
+            $mail->addAddress($correo);
+        }
+        $mail->Subject = 'Reporte de Ingresos y Mensajes Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
     }
-    $mail->Subject = 'Reporte de Ingresos y Mensajes Semanal de asignaturas de pregrado  - ' . $fecha_para_nombre;
-    $mail->Body = 'Cordial Saludo, Adjunto el Reporte de Ingresos y Mensajes Semanal de asignaturas de pregrado, que contiene los archivos de estudiantes y profesores.';
+    
+    $mail->Body = "Cordial Saludo,\n\nAdjunto el Reporte de Ingresos y Mensajes Semanal de asignaturas de pregrado correspondiente al período del {$fecha_inicio} al {$fecha_fin}. El reporte contiene los archivos de estudiantes y profesores.\n\nSaludos,\nReporte Moodle";
+    $mail->isHTML(false); // Asegura que el correo sea texto plano
+    
     if (file_exists($zip_file)) {
         $mail->addAttachment($zip_file, "reporte_asignaturas_pregrado_{$fecha_para_nombre}.zip");
     }
+    
     $mail->send();
 
     // Eliminar archivos temporales
@@ -332,9 +214,22 @@ try {
     }
 
     // Enviar notificación de éxito
-    mail($correo_notificacion, 'Estado Reporte', 'El reporte  ingresos y mensajes pregrado fue enviado correctamente.');
+    $mensaje_notificacion = $modo_prueba ? 
+        "[PRUEBA] El reporte ingresos y mensajes pregrado fue generado correctamente en modo prueba." :
+        "El reporte ingresos y mensajes pregrado fue enviado correctamente a los destinatarios.";
+    
+    mail($correo_notificacion, 'Estado Reporte', $mensaje_notificacion);
+    
+    if ($modo_prueba) {
+        echo "Modo prueba: El reporte se generó correctamente y se envió solo a $correo_pruebas";
+    }
+} catch (PDOException $e) {
+    mail($correo_notificacion, 'Error Reporte - Base de Datos', 'Error en la base de datos: ' . $e->getMessage());
+    echo "Error en la base de datos: " . $e->getMessage();
+} catch (PHPMailer\PHPMailer\Exception $e) {
+    mail($correo_notificacion, 'Error Reporte - Correo', 'Error al enviar el correo: ' . $e->getMessage());
+    echo "Error al enviar el correo: " . $e->getMessage();
 } catch (Exception $e) {
-    // Enviar notificación de error
-    mail($correo_notificacion, 'Error Reporte', 'Error: ' . $e->getMessage());
-    echo "Error: " . $e->getMessage(); // Mostrar el error en la consola
+    mail($correo_notificacion, 'Error Reporte - General', 'Error: ' . $e->getMessage());
+    echo "Error: " . $e->getMessage();
 }
