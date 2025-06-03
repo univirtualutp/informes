@@ -16,7 +16,7 @@ $correo_notificacion = 'soporteunivirtual@utp.edu.co';
 $correo_pruebas = 'daniel.pardo@utp.edu.co';
 
 // Modo prueba (cambiar a false para producción)
-$modo_prueba = true;
+$modo_prueba = false;
 
 // Calcular fechas (martes a lunes)
 $hoy = new DateTime();
@@ -184,16 +184,16 @@ try {
     if ($modo_prueba) {
         // En modo prueba solo se envía al correo de pruebas
         $mail->addAddress($correo_pruebas);
-        $mail->Subject = '[PRUEBA] Reporte de Ingresos y Mensajes Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
+        $mail->Subject = '[PRUEBA] Reporte de Ingresos  Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
     } else {
         // En modo producción se envía a los destinatarios reales
         foreach ($correo_destino as $correo) {
             $mail->addAddress($correo);
         }
-        $mail->Subject = 'Reporte de Ingresos y Mensajes Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
+        $mail->Subject = 'Reporte de Ingresos  Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
     }
     
-    $mail->Body = "Cordial Saludo,\n\nAdjunto el Reporte de Ingresos y Mensajes Semanal de asignaturas de pregrado correspondiente al período del {$fecha_inicio} al {$fecha_fin}. El reporte contiene los archivos de estudiantes y profesores.\n\nSaludos,\nReporte Moodle";
+    $mail->Body = "Cordial Saludo,\n\nAdjunto el Reporte de Ingresos  Semanal de asignaturas de pregrado correspondiente al período del {$fecha_inicio} al {$fecha_fin}. El reporte contiene los archivos de estudiantes y profesores.\n\nSaludos,\nReporte Moodle";
     $mail->isHTML(false); // Asegura que el correo sea texto plano
     
     if (file_exists($zip_file)) {
