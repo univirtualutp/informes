@@ -24,79 +24,84 @@ try {
 
     // Consulta SQL con las modificaciones solicitadas
     $sql = "SELECT 
-      u.username AS Documento,
-      mr.name AS rol,
-      u.firstname AS Nombres,
-      u.lastname AS Apellidos,
-      u.email AS correo,
-      c.fullname AS curso,
+  u.username AS Documento,
+  mr.name AS rol,
+  u.firstname AS Nombres,
+  u.lastname AS Apellidos,
+  u.email AS correo,
+  c.fullname AS curso,
 
-      CASE 
-        WHEN to_char(to_timestamp(MAX(mue.timecreated)), 'YYYY-MM-DD') IN ('1969-12-31', '1970-01-01') THEN 'NUNCA'
-        ELSE to_char(to_timestamp(MAX(mue.timecreated)), 'YYYY-MM-DD')
-      END AS fecha_matricula,
+  CASE 
+    WHEN to_char(to_timestamp(MAX(mue.timecreated)), 'YYYY-MM-DD') = '1969-12-31' THEN 'NUNCA'
+    ELSE to_char(to_timestamp(MAX(mue.timecreated)), 'YYYY-MM-DD')
+  END AS fecha_matricula,
 
-      CASE 
-        WHEN to_char(to_timestamp(MAX(u.firstaccess)), 'YYYY-MM-DD') IN ('1969-12-31', '1970-01-01') THEN 'NUNCA'
-        ELSE to_char(to_timestamp(MAX(u.firstaccess)), 'YYYY-MM-DD')
-      END AS fecha_primer_acceso,
+  CASE 
+    WHEN to_char(to_timestamp(MAX(u.firstaccess)), 'YYYY-MM-DD') = '1969-12-31' THEN 'NUNCA'
+    ELSE to_char(to_timestamp(MAX(u.firstaccess)), 'YYYY-MM-DD')
+  END AS fecha_primer_acceso,
 
-      CASE 
-        WHEN to_char(to_timestamp(MAX(u.lastaccess)), 'YYYY-MM-DD') IN ('1969-12-31', '1970-01-01') THEN 'NUNCA'
-        ELSE to_char(to_timestamp(MAX(u.lastaccess)), 'YYYY-MM-DD')
-      END AS fecha_ultimo_acceso,
+  CASE 
+    WHEN to_char(to_timestamp(MAX(u.lastaccess)), 'YYYY-MM-DD') = '1969-12-31' THEN 'NUNCA'
+    ELSE to_char(to_timestamp(MAX(u.lastaccess)), 'YYYY-MM-DD')
+  END AS fecha_ultimo_acceso,
 
-      CASE 
-        WHEN ROUND(AVG(a.Nota), 2) >= 4.0 THEN MAX(a.fecha_realizacion)
-        ELSE NULL
-      END AS fecha_culminación,
+  CASE 
+    WHEN MAX(a.fecha_realizacion) = '1969-12-31' THEN 'NUNCA'
+    ELSE MAX(a.fecha_realizacion)
+  END AS fecha_culminación,
 
-      CASE 
-        WHEN ROUND(AVG(a.Nota), 2) >= 4.0 THEN 'APROBÓ'
-        ELSE 'No Aprobado'
-      END AS promedio_nota,
+  --ROUND(COALESCE(AVG(a.Nota), 0), 2) AS nota_numerica, -- Promedio ponderado en escala 0-5
 
-      ROUND(AVG(a.Nota), 2) AS nota_numerica
+  CASE 
+    WHEN ROUND(COALESCE(AVG(a.Nota), 0), 2) >= 4.0 THEN 'APROBÓ'
+    ELSE 'NO APROBADO'
+  END AS promedio_nota
 
+FROM mdl_user u
+JOIN mdl_user_enrolments mue ON mue.userid = u.id
+JOIN mdl_role_assignments mra ON mra.userid = u.id
+JOIN mdl_role mr ON mr.id = mra.roleid
+JOIN mdl_context mc ON mc.id = mra.contextid
+JOIN mdl_course c ON c.id = mc.instanceid
+LEFT JOIN 
+(
+    SELECT 
+      u.id AS userid,
+      c.id AS course_id,
+      to_char(to_timestamp(MAX(COALESCE(mqg.timemodified, 0))), 'YYYY-MM-DD') AS fecha_realizacion,
+      COALESCE(AVG(CASE 
+        WHEN q.id IN (899,900,901,902) AND gr.finalgrade IS NOT NULL THEN gr.finalgrade
+        ELSE 0 
+      END), 0) AS Nota
     FROM mdl_user u
-    JOIN mdl_user_enrolments mue ON mue.userid = u.id
-    JOIN mdl_role_assignments mra ON mra.userid = u.id
-    JOIN mdl_role mr ON mr.id = mra.roleid
-    JOIN mdl_context mc ON mc.id = mra.contextid
-    JOIN mdl_course c ON c.id = mc.instanceid
-    LEFT JOIN 
-    (
-        SELECT 
-          mgm.userid,
-          mg.name as Grupo
-        FROM mdl_groups mg 
-        JOIN mdl_groups_members mgm ON mgm.groupid = mg.id
-        WHERE mg.courseid = '199'
-        AND EXISTS (
-            SELECT 1 FROM mdl_role_assignments mra 
-            JOIN mdl_role mr ON mr.id = mra.roleid
-            WHERE mra.userid = mgm.userid AND mr.id = '5'
-        )
-    ) g ON g.userid = u.id
-    LEFT JOIN 
-    (
-        SELECT 
-          mqg.userid AS userid,
-          c.id AS course_id,
-          to_char(to_timestamp(MAX(mqg.timemodified)), 'YYYY-MM-DD') AS fecha_realizacion,
-          COALESCE(AVG(gr.finalgrade), 0) AS Nota
-        FROM mdl_quiz_grades mqg
-        JOIN mdl_quiz q ON q.id = mqg.quiz AND q.id IN (166, 177)
-        JOIN mdl_course c ON c.id = q.course
-        JOIN mdl_grade_items i ON i.iteminstance = q.id AND i.itemmodule = 'quiz'
-        JOIN mdl_grade_grades gr ON gr.itemid = i.id AND gr.userid = mqg.userid
-        GROUP BY mqg.userid, c.id
-    ) a ON a.userid = u.id AND a.course_id = c.id
-    WHERE mc.contextlevel = 50
-    AND c.id = '199'
-    AND mr.id = '5'
-    GROUP BY u.username, mr.name, u.firstname, u.lastname, u.email, c.fullname
-    ORDER BY u.lastname, u.firstname;";
+    CROSS JOIN mdl_quiz q
+    LEFT JOIN mdl_quiz_grades mqg ON mqg.quiz = q.id AND q.id IN (899,900,901,902)
+    LEFT JOIN mdl_course c ON c.id = q.course
+    LEFT JOIN mdl_grade_items i ON i.iteminstance = q.id AND i.itemmodule = 'quiz'
+    LEFT JOIN mdl_grade_grades gr ON gr.itemid = i.id AND gr.userid = u.id
+    WHERE c.id = '199'
+    GROUP BY u.id, c.id
+) a ON a.userid = u.id AND a.course_id = c.id
+LEFT JOIN 
+(
+    SELECT 
+      mgm.userid,
+      mg.name AS Grupo
+    FROM mdl_groups mg 
+    JOIN mdl_groups_members mgm ON mgm.groupid = mg.id
+    WHERE mg.courseid = '199'
+    AND EXISTS (
+        SELECT 1 FROM mdl_role_assignments mra 
+        JOIN mdl_role mr ON mr.id = mra.roleid
+        WHERE mra.userid = mgm.userid AND mr.id = '5'
+    )
+) g ON g.userid = u.id
+WHERE mc.contextlevel = 50
+AND c.id = '199'
+AND mr.id = '5'
+GROUP BY u.username, mr.name, u.firstname, u.lastname, u.email, c.fullname
+ORDER BY u.lastname, u.firstname;";
 
     // Preparar y ejecutar la consulta
     $stmt = $pdo->prepare($sql);
