@@ -47,33 +47,36 @@ try {
 
     $sql = "WITH AllDays AS (
       SELECT generate_series(
-            :fecha_inicio::timestamp,
-            :fecha_fin::timestamp,
-            interval '1 day'
-        )::DATE AS fecha
+        :fecha_inicio::timestamp,
+        :fecha_fin::timestamp,
+        interval '1 day'
+      )::DATE AS fecha
     ),
-    UserCourseDays AS (
+    UserInfo AS (
       SELECT 
-        u.id AS userid,
-        c.id AS courseid,
-        mr.name AS rol,
-        mr.id AS roleid,
-        COUNT(DISTINCT CASE WHEN mlsl.id IS NOT NULL THEN ad.fecha END) AS total_ingresos
-      FROM mdl_user u
-      CROSS JOIN AllDays ad
-      LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
-      LEFT JOIN mdl_role mr ON mra.roleid = mr.id
-      LEFT JOIN mdl_context mc ON mc.id = mra.contextid
-      LEFT JOIN mdl_course c ON c.id = mc.instanceid 
-      LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
-        AND mlsl.userid = u.id
-        AND mlsl.action = 'viewed'
-        AND mlsl.target IN ('course', 'course_module')
-        AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
-      WHERE mc.contextlevel = 50
-        AND u.username NOT IN ('12345678')
-        AND c.id IN ($cursos_in)
-      GROUP BY u.id, c.id, mr.id
+        uid.userid,
+        MAX(CASE WHEN ufield.shortname = 'programa' THEN uid.data END) AS idprograma,
+        MAX(CASE WHEN ufield.shortname = 'facultad' THEN uid.data END) AS idfacultad,
+        MAX(CASE WHEN ufield.shortname = 'edad' THEN uid.data END) AS edad,
+        MAX(CASE WHEN ufield.shortname = 'genero' THEN uid.data END) AS genero,
+        MAX(CASE WHEN ufield.shortname = 'celular' THEN uid.data END) AS celular,
+        MAX(CASE WHEN ufield.shortname = 'estrato' THEN uid.data END) AS estrato
+      FROM mdl_user_info_data uid
+      JOIN mdl_user_info_field ufield ON ufield.id = uid.fieldid
+      WHERE ufield.shortname IN ('programa', 'facultad', 'edad', 'genero', 'celular', 'estrato')
+      GROUP BY uid.userid
+    ),
+    CourseInfo AS (
+      SELECT 
+        cfidata.instanceid,
+        MAX(CASE WHEN cfield.shortname = 'codigo_curso' THEN cfidata.value END) AS idcodigo,
+        MAX(CASE WHEN cfield.shortname = 'grupo_curso' THEN cfidata.value END) AS grupo,
+        MAX(CASE WHEN cfield.shortname = 'periodo' THEN cfidata.value END) AS periodo,
+        MAX(CASE WHEN cfield.shortname = 'nivel_educativo' THEN cfidata.value END) AS nivel
+      FROM mdl_customfield_data cfidata
+      JOIN mdl_customfield_field cfield ON cfield.id = cfidata.fieldid
+      WHERE cfield.shortname IN ('codigo_curso', 'grupo_curso', 'periodo', 'nivel_educativo')
+      GROUP BY cfidata.instanceid
     )
     SELECT 
       u.username AS codigo,
@@ -81,20 +84,49 @@ try {
       u.lastname AS apellidos,
       u.email AS correo,
       c.fullname AS curso,
-      mr.name AS rol,
-      mr.id AS rol_id,
-      COALESCE(ucd.total_ingresos, 0) AS total_ingresos
+      mr.name as rol,
+      ui.idprograma,
+      ui.idfacultad,
+      ci.idcodigo,
+      ci.grupo,
+      ci.periodo,
+      ci.nivel,
+      ui.edad,
+      ui.genero,
+      ui.celular,
+      ui.estrato,
+      ad.fecha,
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM mdl_logstore_standard_log mlsl
+        WHERE mlsl.courseid = c.id
+          AND mlsl.userid = u.id
+          AND mlsl.action = 'viewed'
+          AND mlsl.target IN ('course', 'course_module')
+          AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
+      ) THEN 1 ELSE 0 END AS ingreso_dia,
+       -- Subconsulta para obtener el número de documento del docente
+      (SELECT CONCAT(u2.idnumber) AS Teacher
+       FROM mdl_role_assignments AS ra
+       JOIN mdl_context AS ctx ON ra.contextid = ctx.id
+       JOIN mdl_user AS u2 ON u2.id = ra.userid
+       WHERE ra.roleid = 3
+         AND ctx.instanceid = c.id
+       LIMIT 1) AS nrodoc
     FROM mdl_user u
+    CROSS JOIN AllDays ad
     LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
     LEFT JOIN mdl_role mr ON mra.roleid = mr.id
     LEFT JOIN mdl_context mc ON mc.id = mra.contextid
     LEFT JOIN mdl_course c ON c.id = mc.instanceid 
-    LEFT JOIN UserCourseDays ucd ON ucd.userid = u.id AND ucd.courseid = c.id AND ucd.roleid = mr.id
+    LEFT JOIN UserInfo ui ON ui.userid = u.id
+    LEFT JOIN CourseInfo ci ON ci.instanceid = c.id
     WHERE mc.contextlevel = 50
       AND u.username NOT IN ('12345678')
       AND c.id IN ($cursos_in)
-    GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.name, mr.id, ucd.total_ingresos
-    ORDER BY c.fullname, u.lastname, u.firstname";
+      AND mr.id IN ('9')
+    GROUP BY u.id, c.id, u.email, mr.name, ad.fecha, ui.idprograma, ui.idfacultad, ci.idcodigo, ci.grupo, ci.periodo, ci.nivel, ui.edad, ui.genero, ui.celular, ui.estrato
+    ORDER BY c.fullname, ad.fecha, u.lastname, u.firstname";
 
     // Preparar y ejecutar la consulta
     $stmt = $pdo->prepare($sql);
@@ -103,7 +135,7 @@ try {
     $params = [
         ':fecha_inicio' => $fecha_inicio, 
         ':fecha_fin' => $fecha_fin
-    ] + $cursos_params + $cursos_params; // Duplicamos para los dos IN clauses
+    ] + $cursos_params;
 
     $stmt->execute($params);
     $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);

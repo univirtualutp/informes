@@ -28,9 +28,9 @@ $cursos_str = implode("','", $cursos);
 // =============================================
 $hoy = new DateTime('now', new DateTimeZone('America/Bogota'));
 
-// Fecha de inicio FIJA (2025-02-03 00:00:00)
-$fecha_inicio = '2025-02-03 00:00:00';
-$fecha_inicio_simple = '2025-02-03';
+// Fecha de inicio FIJA (2025-08-04 00:00:00)
+$fecha_inicio = '2025-08-04 00:00:00';
+$fecha_inicio_simple = '2025-08-04';
 
 // Fecha final DINÁMICA (último lunes a las 23:59:59)
 $lunes_pasado = clone $hoy;
@@ -58,14 +58,40 @@ try {
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $db->exec("SET TIME ZONE 'America/Bogota'");
 
-    // CONSULTA SQL IDÉNTICA A LA ORIGINAL
+    // NUEVA CONSULTA SQL
     $sql = "
 WITH AllDays AS (
   SELECT generate_series(
-        timestamp '$fecha_inicio',
-        timestamp '$fecha_fin',
+    timestamp '$fecha_inicio',
+    timestamp '$fecha_fin',
     interval '1 day'
   )::DATE AS fecha
+),
+UserInfo AS (
+  SELECT 
+    uid.userid,
+    MAX(CASE WHEN ufield.shortname = 'programa' THEN uid.data END) AS idprograma,
+    MAX(CASE WHEN ufield.shortname = 'facultad' THEN uid.data END) AS idfacultad,
+    MAX(CASE WHEN ufield.shortname = 'edad' THEN uid.data END) AS edad,
+    MAX(CASE WHEN ufield.shortname = 'genero' THEN uid.data END) AS genero,
+    MAX(CASE WHEN ufield.shortname = 'celular' THEN uid.data END) AS celular,
+    MAX(CASE WHEN ufield.shortname = 'estrato' THEN uid.data END) AS estrato
+  FROM mdl_user_info_data uid
+  JOIN mdl_user_info_field ufield ON ufield.id = uid.fieldid
+  WHERE ufield.shortname IN ('programa', 'facultad', 'edad', 'genero', 'celular', 'estrato')
+  GROUP BY uid.userid
+),
+CourseInfo AS (
+  SELECT 
+    cfidata.instanceid,
+    MAX(CASE WHEN cfield.shortname = 'codigo_curso' THEN cfidata.value END) AS idcodigo,
+    MAX(CASE WHEN cfield.shortname = 'grupo_curso' THEN cfidata.value END) AS grupo,
+    MAX(CASE WHEN cfield.shortname = 'periodo' THEN cfidata.value END) AS periodo,
+    MAX(CASE WHEN cfield.shortname = 'nivel_educativo' THEN cfidata.value END) AS nivel
+  FROM mdl_customfield_data cfidata
+  JOIN mdl_customfield_field cfield ON cfield.id = cfidata.fieldid
+  WHERE cfield.shortname IN ('codigo_curso', 'grupo_curso', 'periodo', 'nivel_educativo')
+  GROUP BY cfidata.instanceid
 ),
 UserCourseAccess AS (
   SELECT 
@@ -81,7 +107,7 @@ UserCourseAccess AS (
     AND mlsl.userid = u.id
     AND mlsl.action = 'viewed'
     AND mlsl.target IN ('course', 'course_module')
-    AND CAST(to_timestamp(mlsl.timecreated) AS DATE) BETWEEN '$fecha_inicio_simple ' AND '$fecha_fin_simple'
+    AND CAST(to_timestamp(mlsl.timecreated) AS DATE) BETWEEN '$fecha_inicio_simple' AND '$fecha_fin_simple'
   WHERE mc.contextlevel = 50
     AND u.username NOT IN ('12345678')
     AND c.id IN ('$cursos_str')
@@ -95,18 +121,38 @@ SELECT
   u.lastname AS apellidos,
   u.email AS correo,
   c.fullname AS curso,
-  COALESCE(uca.access_days, 0) AS total_ingresos
+  COALESCE(uca.access_days, 0) AS total_ingresos,
+  ui.idprograma,
+  ui.idfacultad,
+  ci.idcodigo,
+  ci.grupo,
+  ci.periodo,
+  ci.nivel,
+  ui.edad,
+  ui.genero,
+  ui.celular,
+  ui.estrato,
+  (SELECT CONCAT(u2.idnumber) AS Teacher
+   FROM mdl_role_assignments AS ra
+   JOIN mdl_context AS ctx ON ra.contextid = ctx.id
+   JOIN mdl_user AS u2 ON u2.id = ra.userid
+   WHERE ra.roleid = 3
+     AND ctx.instanceid = c.id
+   LIMIT 1) AS nrodoc
 FROM mdl_user u
 JOIN mdl_role_assignments mra ON mra.userid = u.id
 JOIN mdl_role mr ON mra.roleid = mr.id
 JOIN mdl_context mc ON mc.id = mra.contextid
 JOIN mdl_course c ON c.id = mc.instanceid
+LEFT JOIN UserInfo ui ON ui.userid = u.id
+LEFT JOIN CourseInfo ci ON ci.instanceid = c.id
 LEFT JOIN UserCourseAccess uca ON uca.userid = u.id AND uca.courseid = c.id
 WHERE mc.contextlevel = 50
   AND u.username NOT IN ('12345678')
   AND c.id IN ('$cursos_str')
   AND mr.id IN ('3','5','9','11','16','17')
-GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.name, uca.access_days
+GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.name, uca.access_days, 
+         ui.idprograma, ui.idfacultad, ci.idcodigo, ci.grupo, ci.periodo, ci.nivel, ui.edad, ui.genero, ui.celular, ui.estrato
 ORDER BY c.fullname, u.lastname, u.firstname";
 
     // Ejecutar consulta
@@ -137,8 +183,12 @@ ORDER BY c.fullname, u.lastname, u.firstname";
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle($tituloHoja);
         
-        // Encabezados
-        $headers = ['Código', 'Rol', 'Nombre', 'Apellidos', 'Correo', 'Curso', 'Total Ingresos'];
+        // Encabezados con las nuevas columnas
+        $headers = [
+            'Código', 'Rol', 'Nombre', 'Apellidos', 'Correo', 'Curso', 'Total Ingresos',
+            'ID Programa', 'ID Facultad', 'Código Curso', 'Grupo', 'Periodo', 'Nivel Educativo',
+            'Edad', 'Género', 'Celular', 'Estrato', 'Nro. Doc. Docente'
+        ];
         $sheet->fromArray($headers, null, 'A1');
         
         // Datos
@@ -162,10 +212,23 @@ ORDER BY c.fullname, u.lastname, u.firstname";
                 \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC
             );
             
+            // Nuevas columnas
+            $sheet->setCellValue('H' . $row, $item['idprograma']);
+            $sheet->setCellValue('I' . $row, $item['idfacultad']);
+            $sheet->setCellValue('J' . $row, $item['idcodigo']);
+            $sheet->setCellValue('K' . $row, $item['grupo']);
+            $sheet->setCellValue('L' . $row, $item['periodo']);
+            $sheet->setCellValue('M' . $row, $item['nivel']);
+            $sheet->setCellValue('N' . $row, $item['edad']);
+            $sheet->setCellValue('O' . $row, $item['genero']);
+            $sheet->setCellValue('P' . $row, $item['celular']);
+            $sheet->setCellValue('Q' . $row, $item['estrato']);
+            $sheet->setCellValue('R' . $row, $item['nrodoc']);
+            
             $row++;
         }
         
-        // Opcional: Formatear columna "Total Ingresos" como número
+        // Opcional: Formatear columnas numéricas
         $sheet->getStyle('G2:G' . ($row - 1))
               ->getNumberFormat()
               ->setFormatCode('0'); // Formato numérico sin decimales
