@@ -17,7 +17,7 @@
 // CONFIGURACIÓN INICIAL (IMPORTANTE: CLI_SCRIPT debe ir primero)
 // =============================================================================
 
-define('CLI_SCRIPT', true); // Definición esencial para scripts CLI de Moodle
+define('CLI_SCRIPT', true);
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -30,23 +30,24 @@ if ($modoPrueba) {
     echo "Validando datos SIN realizar matrículas reales\n\n";
 }
 
-// Ruta base del proyecto (ajustar según tu estructura)
-$basePath = '/root/scripts/informes/registro_control';
+// =============================================================================
+// CONFIGURACIÓN DE RUTAS DEFINITIVAS
+// =============================================================================
 
-// Cargar configuración con rutas absolutas
-$config = require $basePath.'/config/env.php';
-
-// Cargar autoload de Composer (ruta absoluta)
-$autoloadPath = $basePath.'/vendor/autoload.php';
-if (!file_exists($autoloadPath)) {
-    die("ERROR: No se encontró autoload.php en $autoloadPath\nEjecuta 'composer install' primero\n");
+// Ruta al vendor (ajustada a tu estructura real)
+$vendorPath = '/root/scripts/informes/vendor/autoload.php';
+if (!file_exists($vendorPath)) {
+    die("ERROR: autoload.php no encontrado en $vendorPath\nEjecuta 'composer install' en /root/scripts/informes/\n");
 }
-require_once $autoloadPath;
+require_once $vendorPath;
 
-// Cargar Moodle (ruta absoluta)
+// Cargar configuración
+$config = require __DIR__.'/config/env.php';
+
+// Verificar y cargar Moodle
 $moodleConfigPath = $config['PATHS']['moodle_config'];
 if (!file_exists($moodleConfigPath)) {
-    die("ERROR: No se encontró config.php de Moodle en $moodleConfigPath\n");
+    die("ERROR: config.php de Moodle no encontrado en $moodleConfigPath\n");
 }
 require_once $moodleConfigPath;
 global $DB, $CFG;
