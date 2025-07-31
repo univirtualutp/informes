@@ -4,5 +4,14 @@ db_moodle_config.php
 *.ini
 *.env
 /config.php
+/config/env.php
 /secrets/
 .DS_Store
+
+# Archivos generados
+*.xlsx
+*.csv
+*.log
+
+# Logs
+/logs/*
