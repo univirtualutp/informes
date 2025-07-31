@@ -1,24 +1,21 @@
 <?php
 /**
- * SCRIPT DE MATRÍCULA AUTOMÁTICA PARA MOODLE 4.2.1
- * 
- * Uso normal: php matricula_moodle.php
- * Modo prueba: php matricula_moodle.php --dry-run
+ * SCRIPT DE MATRÍCULA AUTOMÁTICA PARA MOODLE 4.2.1 - VERSIÓN CSV
  * 
  * Características:
- * - Consulta estudiantes en Oracle -> Sistemas UTP
+ * - Consulta estudiantes en Oracle
  * - Verifica existencia en Moodle
  * - Valida coincidencia de cursos por IDGRUPO
- * - Modo prueba realiza todas las validaciones sin modificar datos
- * - Genera reportes Excel y envía correos en ambos modos
+ * - Modo prueba realiza validaciones sin modificar datos
+ * - Genera reportes en formato CSV bien codificado
+ * - Envía correos con reportes adjuntos
  */
 
 // =============================================================================
-// CONFIGURACIÓN INICIAL (IMPORTANTE: CLI_SCRIPT debe ir primero)
+// CONFIGURACIÓN INICIAL
 // =============================================================================
 
-require_once __DIR__.'/../../vendor/autoload.php';
-define('CLI_SCRIPT', true);
+define('CLI_SCRIPT', true); // Definición esencial para scripts CLI de Moodle
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -32,23 +29,23 @@ if ($modoPrueba) {
 }
 
 // =============================================================================
-// CONFIGURACIÓN DE RUTAS DEFINITIVAS
+// CONFIGURACIÓN DE RUTAS
 // =============================================================================
 
-// Ruta al vendor (ajustada a tu estructura real)
-$vendorPath = '/root/scripts/informes/vendor/autoload.php';
-if (!file_exists($vendorPath)) {
-    die("ERROR: autoload.php no encontrado en $vendorPath\nEjecuta 'composer install' en /root/scripts/informes/\n");
+// Ruta al autoload.php (ajustar según tu estructura)
+$autoloadPath = '/root/scripts/informes/vendor/autoload.php';
+if (!file_exists($autoloadPath)) {
+    die("ERROR: No se encontró autoload.php en $autoloadPath\nEjecuta 'composer install' primero\n");
 }
-require_once $vendorPath;
+require_once $autoloadPath;
 
 // Cargar configuración
 $config = require __DIR__.'/config/env.php';
 
-// Verificar y cargar Moodle
+// Cargar Moodle
 $moodleConfigPath = $config['PATHS']['moodle_config'];
 if (!file_exists($moodleConfigPath)) {
-    die("ERROR: config.php de Moodle no encontrado en $moodleConfigPath\n");
+    die("ERROR: No se encontró config.php de Moodle en $moodleConfigPath\n");
 }
 require_once $moodleConfigPath;
 global $DB, $CFG;
@@ -114,7 +111,7 @@ function obtenerEstudiantesMatricular($conn) {
 }
 
 /**
- * Verifica si usuario existe en Moodle (consulta REAL en ambos modos)
+ * Verifica si usuario existe en Moodle
  */
 function usuarioExisteEnMoodle($username) {
     global $DB;
@@ -128,7 +125,7 @@ function usuarioExisteEnMoodle($username) {
 }
 
 /**
- * Busca curso por IDGRUPO (summary) - Consulta REAL en ambos modos
+ * Busca curso por IDGRUPO (summary)
  */
 function obtenerCursoPorSummary($summary) {
     global $DB;
@@ -190,44 +187,45 @@ function matricularUsuario($userid, $courseid) {
 }
 
 /**
- * Genera reporte Excel con los resultados
+ * Genera reporte CSV bien codificado
  */
-function generarReporteExcel($datos, $rutaArchivo) {
-    $objPHPExcel = new PHPExcel();
-    $objPHPExcel->setActiveSheetIndex(0);
-    $sheet = $objPHPExcel->getActiveSheet();
+function generarReporteCSV($datos, $rutaArchivo) {
+    // Abrir archivo en modo escritura con codificación UTF-8
+    $file = fopen($rutaArchivo, 'w+');
     
-    // Encabezados
-    $sheet->setCellValue('A1', 'Username');
-    $sheet->setCellValue('B1', 'Nombres');
-    $sheet->setCellValue('C1', 'Apellidos');
-    $sheet->setCellValue('D1', 'Email');
-    $sheet->setCellValue('E1', 'ID Curso');
-    $sheet->setCellValue('F1', 'Nombre Curso');
-    $sheet->setCellValue('G1', 'ID Grupo');
-    $sheet->setCellValue('H1', 'Resultado');
+    // Añadir BOM para UTF-8 (mejora compatibilidad con Excel)
+    fwrite($file, "\xEF\xBB\xBF");
     
-    // Datos
-    $row = 2;
+    // Escribir encabezados
+    $encabezados = [
+        'Username',
+        'Nombres',
+        'Apellidos',
+        'Email',
+        'ID Curso',
+        'Nombre Curso',
+        'ID Grupo',
+        'Resultado'
+    ];
+    fputcsv($file, $encabezados);
+    
+    // Escribir datos
     foreach ($datos as $item) {
-        $sheet->setCellValue('A'.$row, $item['username']);
-        $sheet->setCellValue('B'.$row, $item['nombres']);
-        $sheet->setCellValue('C'.$row, $item['apellidos']);
-        $sheet->setCellValue('D'.$row, $item['email']);
-        $sheet->setCellValue('E'.$row, $item['courseid']);
-        $sheet->setCellValue('F'.$row, $item['coursename']);
-        $sheet->setCellValue('G'.$row, $item['idgrupo']);
-        $sheet->setCellValue('H'.$row, $item['resultado']);
-        $row++;
+        $fila = [
+            $item['username'],
+            $item['nombres'],
+            $item['apellidos'],
+            $item['email'],
+            $item['courseid'] ?? '',
+            $item['coursename'] ?? '',
+            $item['idgrupo'],
+            $item['resultado']
+        ];
+        fputcsv($file, $fila);
     }
     
-    // Autoajustar columnas
-    foreach (range('A', 'H') as $column) {
-        $sheet->getColumnDimension($column)->setAutoSize(true);
-    }
-    
-    $objWriter = PHPExcel_IOFactory::createWriter($objPHPExcel, 'Excel2007');
-    $objWriter->save($rutaArchivo);
+    fclose($file);
+    return $rutaArchivo;
 }
 
 /**
@@ -251,15 +249,18 @@ function enviarCorreoConReporte($archivo, $conteo, $asunto) {
     $headers .= "MIME-Version: 1.0\r\n";
     $headers .= "Content-Type: multipart/mixed; boundary=\"boundary\"\r\n";
     
+    // Leer contenido del archivo CSV
+    $csvContent = file_get_contents($archivo);
+    
     $body = "--boundary\r\n";
     $body .= "Content-Type: text/plain; charset=\"utf-8\"\r\n";
     $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
     $body .= $message."\r\n\r\n";
     $body .= "--boundary\r\n";
-    $body .= "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet; name=\"".basename($archivo)."\"\r\n";
+    $body .= "Content-Type: text/csv; name=\"".basename($archivo)."\"\r\n";
     $body .= "Content-Transfer-Encoding: base64\r\n";
     $body .= "Content-Disposition: attachment\r\n\r\n";
-    $body .= chunk_split(base64_encode(file_get_contents($archivo)))."\r\n";
+    $body .= chunk_split(base64_encode($csvContent))."\r\n";
     $body .= "--boundary--";
     
     return mail($to, $subject, $body, $headers);
@@ -343,10 +344,10 @@ try {
         $resultados[] = $resultado;
     }
     
-    // 3. Generar reporte Excel
-    $nombreArchivo = '/tmp/reporte_matriculas_' . date('Ymd_His') . '.xlsx';
-    generarReporteExcel($resultados, $nombreArchivo);
-    echo "\nReporte generado: $nombreArchivo\n";
+    // 3. Generar reporte CSV
+    $nombreArchivo = '/tmp/reporte_matriculas_' . date('Ymd_His') . '.csv';
+    generarReporteCSV($resultados, $nombreArchivo);
+    echo "\nReporte CSV generado: $nombreArchivo\n";
     
     // 4. Enviar correo con reporte
     $asunto = ($modoPrueba ? '[PRUEBA] ' : '') . EMAIL_ASUNTO . ' - ' . date('Y-m-d H:i:s');
