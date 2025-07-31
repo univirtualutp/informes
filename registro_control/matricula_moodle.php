@@ -17,6 +17,7 @@
 // CONFIGURACIÓN INICIAL (IMPORTANTE: CLI_SCRIPT debe ir primero)
 // =============================================================================
 
+require_once __DIR__.'/../../vendor/autoload.php';
 define('CLI_SCRIPT', true);
 
 error_reporting(E_ALL);
