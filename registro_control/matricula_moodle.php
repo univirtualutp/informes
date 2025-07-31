@@ -30,15 +30,26 @@ if ($modoPrueba) {
     echo "Validando datos SIN realizar matrículas reales\n\n";
 }
 
-// Cargar configuración
-$config = require __DIR__.'/config/env.php';
+// Ruta base del proyecto (ajustar según tu estructura)
+$basePath = '/root/scripts/informes/registro_control';
 
-// Cargar Moodle (requiere CLI_SCRIPT definido primero)
-require_once($config['PATHS']['moodle_config']);
+// Cargar configuración con rutas absolutas
+$config = require $basePath.'/config/env.php';
+
+// Cargar autoload de Composer (ruta absoluta)
+$autoloadPath = $basePath.'/vendor/autoload.php';
+if (!file_exists($autoloadPath)) {
+    die("ERROR: No se encontró autoload.php en $autoloadPath\nEjecuta 'composer install' primero\n");
+}
+require_once $autoloadPath;
+
+// Cargar Moodle (ruta absoluta)
+$moodleConfigPath = $config['PATHS']['moodle_config'];
+if (!file_exists($moodleConfigPath)) {
+    die("ERROR: No se encontró config.php de Moodle en $moodleConfigPath\n");
+}
+require_once $moodleConfigPath;
 global $DB, $CFG;
-
-// Cargar PHPExcel
-require_once __DIR__.'/../../vendor/autoload.php';
 
 // =============================================================================
 // CONSTANTES
