@@ -42,24 +42,7 @@ $moodleConfigPath = $config['PATHS']['moodle_config'];
 if (!file_exists($moodleConfigPath)) {
     die("ERROR: No se encontró config.php de Moodle en $moodleConfigPath\n");
 }
-
-// Inicializar Moodle correctamente
 require_once $moodleConfigPath;
-require_once $CFG->libdir.'/adminlib.php';
-require_once $CFG->libdir.'/moodlelib.php';
-require_once $CFG->libdir.'/accesslib.php';
-require_once $CFG->libdir.'/enrollib.php';
-require_once $CFG->libdir.'/datalib.php';
-require_once $CFG->libdir.'/dmllib.php';
-require_once $CFG->libdir.'/weblib.php';
-require_once $CFG->libdir.'/outputlib.php';
-require_once $CFG->libdir.'/classes/message/output.php';
-
-// Verificar configuración de correo
-if (empty($CFG->smtphosts) || empty($CFG->noreplyaddress)) {
-    die("ERROR: Configuración de correo no está completa en Moodle\n");
-}
-
 global $DB, $CFG;
 
 // =============================================================================
@@ -80,7 +63,7 @@ define('ROL_ESTUDIANTE', 5);
 define('ROL_DESMATRICULADO', 9);
 
 // =============================================================================
-// FUNCIONES PRINCIPALES (MODIFICADAS PARA CORREO)
+// FUNCIONES PRINCIPALES
 // =============================================================================
 
 /**
@@ -127,63 +110,6 @@ function obtenerRegistrosProcesar($conn) {
     
     oci_free_statement($stid);
     return $registros;
-}
-
-/**
- * Envía notificación a ambos correos institucionales
- */
-function enviarNotificacionAdministrativa($subject, $message) {
-    global $CFG;
-    
-    $usuarios = [
-        (object)['email' => EMAIL_SOPORTE],
-        (object)['email' => EMAIL_UNIVIRTUAL]
-    ];
-    
-    foreach ($usuarios as $usuario) {
-        $result = email_to_user($usuario, $CFG->noreplyaddress, $subject, $message);
-        if (!$result) {
-            echo "ERROR: No se pudo enviar correo a {$usuario->email}\n";
-        }
-    }
-}
-
-/**
- * Función mejorada para enviar correos con manejo de errores
- */
-function enviarCorreo($usuario, $subject, $message) {
-    global $CFG;
-    
-    // Verificar si el usuario tiene email
-    if (empty($usuario->email)) {
-        echo "ERROR: El usuario no tiene dirección de correo electrónico\n";
-        return false;
-    }
-    
-    // Configurar el remitente
-    $from = new stdClass();
-    $from->email = $CFG->noreplyaddress;
-    $from->firstname = 'Univirtual UTP';
-    $from->lastname = '';
-    $from->maildisplay = true;
-    $from->mailformat = 1; // 0=plain text, 1=HTML
-    
-    // Configurar el usuario destinatario
-    $to = new stdClass();
-    $to->email = $usuario->email;
-    $to->firstname = $usuario->firstname ?? '';
-    $to->lastname = $usuario->lastname ?? '';
-    
-    // Enviar el correo
-    $result = email_to_user($to, $from, $subject, $message);
-    
-    if (!$result) {
-        echo "ERROR: Falló el envío de correo a {$usuario->email}\n";
-        return false;
-    }
-    
-    echo "Correo enviado exitosamente a {$usuario->email}\n";
-    return true;
 }
 
 /**
@@ -237,17 +163,7 @@ function procesarCancelacion($registro, $modoPrueba) {
     // Enviar correos de notificación
     enviarCorreoCancelacionEstudiante($user, $curso);
     enviarCorreoCancelacionDocente($user, $curso);
-    
-    // Notificar a soporte y univirtual
-    $subject = "Cancelación registrada - {$curso->shortname}";
-    $message = "Se ha procesado una cancelación para el estudiante:\n\n";
-    $message .= "Nombre: {$user->firstname} {$user->lastname}\n";
-    $message .= "Documento: {$username}\n";
-    $message .= "Curso: {$curso->fullname}\n";
-    $message .= "ID Grupo: {$idgrupo}\n";
-    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
-    
-    enviarNotificacionAdministrativa($subject, $message);
+    enviarCorreoNotificacionSoporte($user, $curso, 'cancelación');
     
     return true;
 }
@@ -314,17 +230,7 @@ function procesarAdicion($registro, $modoPrueba) {
     
     // Enviar correo al estudiante
     enviarCorreoAdicionEstudiante($user, $curso);
-    
-    // Notificar a soporte y univirtual
-    $subject = "Adición registrada - {$curso->shortname}";
-    $message = "Se ha procesado una adición para el estudiante:\n\n";
-    $message .= "Nombre: {$user->firstname} {$user->lastname}\n";
-    $message .= "Documento: {$username}\n";
-    $message .= "Curso: {$curso->fullname}\n";
-    $message .= "ID Grupo: {$idgrupo}\n";
-    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
-    
-    enviarNotificacionAdministrativa($subject, $message);
+    enviarCorreoNotificacionSoporte($user, $curso, 'adición');
     
     return true;
 }
@@ -350,18 +256,18 @@ function enviarCorreoCancelacionEstudiante($user, $curso) {
     $subject = "Cancelación de asignatura - {$curso->fullname}";
     $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
     $message .= "Te informamos que tu matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
-    $message .= "Si tienes dudas o es un error, comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
+    $message .= "Si tienes dudas comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
     $message .= "Atentamente,\n";
     $message .= "Univirtual UTP";
     
-    return enviarCorreo($user, $subject, $message);
+    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
 }
 
 /**
  * Envía correo al docente cuando se cancela una matrícula
  */
 function enviarCorreoCancelacionDocente($user, $curso) {
-    global $DB;
+    global $DB, $CFG;
     
     // Obtener todos los profesores del curso
     $profesores = $DB->get_records_sql("
@@ -379,12 +285,35 @@ function enviarCorreoCancelacionDocente($user, $curso) {
     $message .= "Atentamente,\n";
     $message .= "Univirtual UTP";
     
-    $resultados = [];
     foreach ($profesores as $profesor) {
-        $resultados[] = enviarCorreo($profesor, $subject, $message);
+        email_to_user($profesor, $CFG->noreplyaddress, $subject, $message);
     }
+}
+
+/**
+ * Envía correo de notificación a soporte y univirtual sobre cambios realizados
+ */
+function enviarCorreoNotificacionSoporte($user, $curso, $tipoOperacion) {
+    global $CFG;
     
-    return !in_array(false, $resultados, true);
+    $subject = "Notificación de $tipoOperacion - {$user->username}";
+    $message = "Se ha realizado una $tipoOperacion en el sistema:\n\n";
+    $message .= "Estudiante: {$user->firstname} {$user->lastname}\n";
+    $message .= "Documento: {$user->username}\n";
+    $message .= "Email: {$user->email}\n";
+    $message .= "Curso: {$curso->fullname}\n";
+    $message .= "ID Curso: {$curso->id}\n";
+    $message .= "ID Grupo: {$curso->summary}\n";
+    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n\n";
+    $message .= "Este correo es informativo, no requiere respuesta.";
+    
+    // Enviar a soporteunivirtual@utp.edu.co
+    $userSoporte = (object)['email' => EMAIL_SOPORTE];
+    email_to_user($userSoporte, $CFG->noreplyaddress, $subject, $message);
+    
+    // Enviar a univirtual-utp@utp.edu.co
+    $userUnivirtual = (object)['email' => EMAIL_UNIVIRTUAL];
+    email_to_user($userUnivirtual, $CFG->noreplyaddress, $subject, $message);
 }
 
 /**
@@ -399,23 +328,20 @@ function enviarCorreoUsuarioNoExiste($username, $idgrupo) {
     $message .= "Por favor crear el usuario manualmente.\n\n";
     $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
     
-    $usuarios = [
-        (object)['email' => EMAIL_SOPORTE, 'firstname' => 'Soporte', 'lastname' => 'Univirtual'],
-        (object)['email' => EMAIL_UNIVIRTUAL, 'firstname' => 'Univirtual', 'lastname' => 'UTP']
-    ];
+    // Enviar a ambos correos
+    $userSoporte = (object)['email' => EMAIL_SOPORTE];
+    $userUnivirtual = (object)['email' => EMAIL_UNIVIRTUAL];
     
-    $resultados = [];
-    foreach ($usuarios as $usuario) {
-        $resultados[] = enviarCorreo($usuario, $subject, $message);
-    }
-    
-    return !in_array(false, $resultados, true);
+    email_to_user($userSoporte, $CFG->noreplyaddress, $subject, $message);
+    email_to_user($userUnivirtual, $CFG->noreplyaddress, $subject, $message);
 }
 
 /**
  * Envía correo al estudiante cuando se añade su matrícula
  */
 function enviarCorreoAdicionEstudiante($user, $curso) {
+    global $CFG;
+    
     $subject = "Matrícula en asignatura - {$curso->fullname}";
     $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
     $message .= "Ha sido matriculado/a en la asignatura {$curso->fullname}.\n\n";
@@ -424,13 +350,15 @@ function enviarCorreoAdicionEstudiante($user, $curso) {
     $message .= "Atentamente,\n";
     $message .= "Univirtual UTP";
     
-    return enviarCorreo($user, $subject, $message);
+    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
 }
 
 /**
  * Envía correo sobre cambio de grupo a soporte
  */
 function enviarCorreoCambioGrupo($registro) {
+    global $CFG;
+    
     $subject = "Cambio de grupo requerido - {$registro['NUMERODOCUMENTO']}";
     $message = "Se requiere cambio de grupo para el estudiante:\n\n";
     $message .= "Documento: {$registro['NUMERODOCUMENTO']}\n";
@@ -440,23 +368,20 @@ function enviarCorreoCambioGrupo($registro) {
     $message .= "Fecha registro: {$registro['FECHACREACION']}\n\n";
     $message .= "Este cambio debe realizarse manualmente en Moodle.";
     
-    $usuarios = [
-        (object)['email' => EMAIL_SOPORTE, 'firstname' => 'Soporte', 'lastname' => 'Univirtual'],
-        (object)['email' => EMAIL_UNIVIRTUAL, 'firstname' => 'Univirtual', 'lastname' => 'UTP']
-    ];
+    // Enviar a ambos correos
+    $userSoporte = (object)['email' => EMAIL_SOPORTE];
+    $userUnivirtual = (object)['email' => EMAIL_UNIVIRTUAL];
     
-    $resultados = [];
-    foreach ($usuarios as $usuario) {
-        $resultados[] = enviarCorreo($usuario, $subject, $message);
-    }
-    
-    return !in_array(false, $resultados, true);
+    email_to_user($userSoporte, $CFG->noreplyaddress, $subject, $message);
+    email_to_user($userUnivirtual, $CFG->noreplyaddress, $subject, $message);
 }
 
 /**
  * Envía reporte final de ejecución
  */
 function enviarReporteFinal($resultados, $modoPrueba) {
+    global $CFG;
+    
     $subject = ($modoPrueba ? "[PRUEBA] " : "") . "Reporte de Adiciones/Cancelaciones - " . date('Y-m-d H:i:s');
     
     $message = "Reporte de ejecución " . ($modoPrueba ? "en modo prueba" : "en producción") . "\n\n";
@@ -467,17 +392,12 @@ function enviarReporteFinal($resultados, $modoPrueba) {
     $message .= "Errores encontrados: {$resultados['errores']}\n\n";
     $message .= "Fecha de inicio del filtro: ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
     
-    $usuarios = [
-        (object)['email' => EMAIL_SOPORTE, 'firstname' => 'Soporte', 'lastname' => 'Univirtual'],
-        (object)['email' => EMAIL_UNIVIRTUAL, 'firstname' => 'Univirtual', 'lastname' => 'UTP']
-    ];
+    // Enviar a ambos correos
+    $userSoporte = (object)['email' => EMAIL_SOPORTE];
+    $userUnivirtual = (object)['email' => EMAIL_UNIVIRTUAL];
     
-    $resultados = [];
-    foreach ($usuarios as $usuario) {
-        $resultados[] = enviarCorreo($usuario, $subject, $message);
-    }
-    
-    return !in_array(false, $resultados, true);
+    email_to_user($userSoporte, $CFG->noreplyaddress, $subject, $message);
+    email_to_user($userUnivirtual, $CFG->noreplyaddress, $subject, $message);
 }
 
 // =============================================================================
@@ -522,9 +442,8 @@ try {
                     break;
                     
                 case TIPO_CAMBIO_GRUPO:
-                    if (procesarCambioGrupo($registro, $modoPrueba)) {
-                        $resultados['cambios_grupo']++;
-                    }
+                    procesarCambioGrupo($registro, $modoPrueba);
+                    $resultados['cambios_grupo']++;
                     break;
                     
                 default:
