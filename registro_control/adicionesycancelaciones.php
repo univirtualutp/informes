@@ -52,6 +52,7 @@ global $DB, $CFG;
 define('EMAIL_SOPORTE', 'soporteunivirtual@utp.edu.co');
 define('EMAIL_SOPORTE_ADICIONAL', 'univirtual-utp@utp.edu.co');
 define('FECHA_INICIO', strtotime('2025-08-04 00:00:00')); // Fecha inicial para procesar registros
+define('FROM_EMAIL', 'noreply@utp.edu.co'); // Dirección de correo para el remitente
 
 // Tipos de operación
 define('TIPO_CANCELACION', 'CANCELACIÓN');
@@ -61,6 +62,27 @@ define('TIPO_CAMBIO_GRUPO', 'CAMBIO DE GRUPO');
 // Roles de Moodle
 define('ROL_ESTUDIANTE', 5);
 define('ROL_DESMATRICULADO', 9);
+
+// =============================================================================
+// FUNCIONES AUXILIARES
+// =============================================================================
+
+/**
+ * Envía un correo usando la función mail de PHP
+ */
+function enviarCorreo($to, $subject, $message) {
+    $headers = "From: " . FROM_EMAIL . "\r\n";
+    $headers .= "MIME-Version: 1.0\r\n";
+    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+    
+    if (mail($to, $subject, $message, $headers)) {
+        echo "[INFO] Correo enviado a $to\n";
+        return true;
+    } else {
+        echo "[ERROR] Falló el envío de correo a $to\n";
+        return false;
+    }
+}
 
 // =============================================================================
 // FUNCIONES PRINCIPALES
@@ -115,8 +137,8 @@ function obtenerRegistrosProcesar($conn) {
 /**
  * Procesa cancelación de asignatura
  */
-function procesarCancelacion($registro, $modoPrueba) {
-    global $DB, $CFG;
+function procesarCancelacion($registro, $modoPrueba, &$resumen) {
+    global $DB;
     
     $idgrupo = $registro['IDGRUPO'];
     $username = $registro['NUMERODOCUMENTO'];
@@ -125,6 +147,7 @@ function procesarCancelacion($registro, $modoPrueba) {
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
     if (!$curso) {
         echo "[CANCELACIÓN] Curso no encontrado para IDGRUPO: $idgrupo\n";
+        $resumen[] = "[ERROR] Cancelación fallida - Curso no encontrado para IDGRUPO: $idgrupo";
         return false;
     }
     
@@ -132,11 +155,13 @@ function procesarCancelacion($registro, $modoPrueba) {
     $user = $DB->get_record('user', ['username' => $username], 'id,email,firstname,lastname');
     if (!$user) {
         echo "[CANCELACIÓN] Usuario no encontrado: $username\n";
+        $resumen[] = "[ERROR] Cancelación fallida - Usuario no encontrado: $username";
         return false;
     }
     
     if ($modoPrueba) {
         echo "[SIMULACIÓN] Se cambiaría rol de $username a DESMATRICULADO en curso {$curso->fullname}\n";
+        $resumen[] = "[SIMULACIÓN] Cancelación - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo)";
         return true;
     }
     
@@ -160,26 +185,12 @@ function procesarCancelacion($registro, $modoPrueba) {
     
     $DB->insert_record('role_assignments', $role_assign);
     
+    // Agregar al resumen
+    $resumen[] = "Cancelación procesada - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha: " . date('Y-m-d H:i:s');
+    
     // Enviar correos de notificación
     enviarCorreoCancelacionEstudiante($user, $curso);
     enviarCorreoCancelacionDocente($user, $curso);
-    
-    // Enviar notificación a soporte
-    $subject = "Notificación: Cancelación procesada - {$curso->fullname}";
-    $message = "Se ha procesado una cancelación:\n\n";
-    $message .= "Estudiante: {$user->firstname} {$user->lastname} ({$user->email})\n";
-    $message .= "Curso: {$curso->fullname} (IDGRUPO: $idgrupo)\n";
-    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
-    
-    $soporte1 = (object)['email' => EMAIL_SOPORTE];
-    $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
-    
-    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de cancelación a " . EMAIL_SOPORTE . "\n";
-    }
-    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de cancelación a " . EMAIL_SOPORTE_ADICIONAL . "\n";
-    }
     
     return true;
 }
@@ -187,8 +198,8 @@ function procesarCancelacion($registro, $modoPrueba) {
 /**
  * Procesa adición de asignatura
  */
-function procesarAdicion($registro, $modoPrueba) {
-    global $DB, $CFG;
+function procesarAdicion($registro, $modoPrueba, &$resumen) {
+    global $DB;
     
     $idgrupo = $registro['IDGRUPO'];
     $username = $registro['NUMERODOCUMENTO'];
@@ -197,6 +208,7 @@ function procesarAdicion($registro, $modoPrueba) {
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
     if (!$curso) {
         echo "[ADICIÓN] Curso no encontrado para IDGRUPO: $idgrupo\n";
+        $resumen[] = "[ERROR] Adición fallida - Curso no encontrado para IDGRUPO: $idgrupo";
         return false;
     }
     
@@ -204,12 +216,14 @@ function procesarAdicion($registro, $modoPrueba) {
     $user = $DB->get_record('user', ['username' => $username], 'id,email,firstname,lastname');
     if (!$user) {
         echo "[ADICIÓN] Usuario no encontrado: $username - Informando a soporte\n";
+        $resumen[] = "[ERROR] Adición fallida - Usuario no encontrado: $username, IDGRUPO: $idgrupo";
         enviarCorreoUsuarioNoExiste($username, $idgrupo);
         return false;
     }
     
     if ($modoPrueba) {
         echo "[SIMULACIÓN] Se matricularía a $username en curso {$curso->fullname}\n";
+        $resumen[] = "[SIMULACIÓN] Adición - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo)";
         return true;
     }
     
@@ -219,6 +233,7 @@ function procesarAdicion($registro, $modoPrueba) {
     // Verificar si ya está matriculado
     if ($DB->record_exists('user_enrolments', ['userid' => $user->id, 'enrolid' => $enrol->id])) {
         echo "[ADICIÓN] Usuario $username ya está matriculado en el curso\n";
+        $resumen[] = "[INFO] Adición omitida - Usuario $username ya está matriculado en el curso {$curso->fullname} (IDGRUPO: $idgrupo)";
         return false;
     }
     
@@ -244,25 +259,11 @@ function procesarAdicion($registro, $modoPrueba) {
     ];
     $DB->insert_record('user_enrolments', (object)$user_enrolment);
     
+    // Agregar al resumen
+    $resumen[] = "Adición procesada - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha: " . date('Y-m-d H:i:s');
+    
     // Enviar correo al estudiante
     enviarCorreoAdicionEstudiante($user, $curso);
-    
-    // Enviar notificación a soporte
-    $subject = "Notificación: Adición procesada - {$curso->fullname}";
-    $message = "Se ha procesado una adición:\n\n";
-    $message .= "Estudiante: {$user->firstname} {$user->lastname} ({$user->email})\n";
-    $message .= "Curso: {$curso->fullname} (IDGRUPO: $idgrupo)\n";
-    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
-    
-    $soporte1 = (object)['email' => EMAIL_SOPORTE];
-    $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
-    
-    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de adición a " . EMAIL_SOPORTE . "\n";
-    }
-    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de adición a " . EMAIL_SOPORTE_ADICIONAL . "\n";
-    }
     
     return true;
 }
@@ -270,9 +271,12 @@ function procesarAdicion($registro, $modoPrueba) {
 /**
  * Procesa cambio de grupo
  */
-function procesarCambioGrupo($registro, $modoPrueba) {
+function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
     if ($modoPrueba) {
         echo "[SIMULACIÓN] Se reportaría cambio de grupo para {$registro['NUMERODOCUMENTO']}\n";
+        $resumen[] = "[SIMULACIÓN] Cambio de grupo - Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}";
+    } else {
+        $resumen[] = "Cambio de grupo reportado - Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}, Fecha: " . date('Y-m-d H:i:s');
     }
     
     enviarCorreoCambioGrupo($registro);
@@ -283,8 +287,6 @@ function procesarCambioGrupo($registro, $modoPrueba) {
  * Envía correo al estudiante cuando se cancela su matrícula
  */
 function enviarCorreoCancelacionEstudiante($user, $curso) {
-    global $CFG;
-    
     $subject = "Cancelación de asignatura - {$curso->fullname}";
     $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
     $message .= "Te informamos que tu matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
@@ -292,16 +294,14 @@ function enviarCorreoCancelacionEstudiante($user, $curso) {
     $message .= "Atentamente,\n";
     $message .= "Univirtual UTP";
     
-    if (!email_to_user($user, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de cancelación al estudiante {$user->email}\n";
-    }
+    enviarCorreo($user->email, $subject, $message);
 }
 
 /**
  * Envía correo al docente cuando se cancela una matrícula
  */
 function enviarCorreoCancelacionDocente($user, $curso) {
-    global $DB, $CFG;
+    global $DB;
     
     // Obtener todos los profesores del curso
     $profesores = $DB->get_records_sql("
@@ -320,9 +320,7 @@ function enviarCorreoCancelacionDocente($user, $curso) {
     $message .= "Univirtual UTP";
     
     foreach ($profesores as $profesor) {
-        if (!email_to_user($profesor, $CFG->noreplyaddress, $subject, $message)) {
-            echo "[ERROR] Falló el envío de correo de cancelación al docente {$profesor->email}\n";
-        }
+        enviarCorreo($profesor->email, $subject, $message);
     }
 }
 
@@ -330,31 +328,20 @@ function enviarCorreoCancelacionDocente($user, $curso) {
  * Envía correo cuando un usuario no existe en Moodle
  */
 function enviarCorreoUsuarioNoExiste($username, $idgrupo) {
-    global $CFG;
-    
     $subject = "[URGENTE] Usuario no existe en Moodle";
     $message = "Se intentó matricular al usuario $username en el curso con IDGRUPO $idgrupo ";
     $message .= "pero no existe en Moodle.\n\n";
     $message .= "Por favor crear el usuario manualmente.\n\n";
     $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
     
-    $soporte1 = (object)['email' => EMAIL_SOPORTE];
-    $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
-    
-    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de usuario no existente a " . EMAIL_SOPORTE . "\n";
-    }
-    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de usuario no existente a " . EMAIL_SOPORTE_ADICIONAL . "\n";
-    }
+    enviarCorreo(EMAIL_SOPORTE, $subject, $message);
+    enviarCorreo(EMAIL_SOPORTE_ADICIONAL, $subject, $message);
 }
 
 /**
  * Envía correo al estudiante cuando se añade su matrícula
  */
 function enviarCorreoAdicionEstudiante($user, $curso) {
-    global $CFG;
-    
     $subject = "Matrícula en asignatura - {$curso->fullname}";
     $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
     $message .= "Ha sido matriculado/a en la asignatura {$curso->fullname}.\n\n";
@@ -363,17 +350,13 @@ function enviarCorreoAdicionEstudiante($user, $curso) {
     $message .= "Atentamente,\n";
     $message .= "Univirtual UTP";
     
-    if (!email_to_user($user, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de adición al estudiante {$user->email}\n";
-    }
+    enviarCorreo($user->email, $subject, $message);
 }
 
 /**
  * Envía correo sobre cambio de grupo a soporte
  */
 function enviarCorreoCambioGrupo($registro) {
-    global $CFG;
-    
     $subject = "Cambio de grupo requerido - {$registro['NUMERODOCUMENTO']}";
     $message = "Se requiere cambio de grupo para el estudiante:\n\n";
     $message .= "Documento: {$registro['NUMERODOCUMENTO']}\n";
@@ -383,23 +366,14 @@ function enviarCorreoCambioGrupo($registro) {
     $message .= "Fecha registro: {$registro['FECHACREACION']}\n\n";
     $message .= "Este cambio debe realizarse manualmente en Moodle.";
     
-    $soporte1 = (object)['email' => EMAIL_SOPORTE];
-    $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
-    
-    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de cambio de grupo a " . EMAIL_SOPORTE . "\n";
-    }
-    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío de correo de cambio de grupo a " . EMAIL_SOPORTE_ADICIONAL . "\n";
-    }
+    enviarCorreo(EMAIL_SOPORTE, $subject, $message);
+    enviarCorreo(EMAIL_SOPORTE_ADICIONAL, $subject, $message);
 }
 
 /**
  * Envía reporte final de ejecución
  */
-function enviarReporteFinal($resultados, $modoPrueba) {
-    global $CFG;
-    
+function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     $subject = ($modoPrueba ? "[PRUEBA] " : "") . "Reporte de Adiciones/Cancelaciones - " . date('Y-m-d H:i:s');
     
     $message = "Reporte de ejecución " . ($modoPrueba ? "en modo prueba" : "en producción") . "\n\n";
@@ -408,17 +382,13 @@ function enviarReporteFinal($resultados, $modoPrueba) {
     $message .= "Adiciones procesadas: {$resultados['adiciones']}\n";
     $message .= "Cambios de grupo reportados: {$resultados['cambios_grupo']}\n";
     $message .= "Errores encontrados: {$resultados['errores']}\n\n";
-    $message .= "Fecha de inicio del filtro: ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
+    $message .= "Fecha de inicio del filtro: " . date('Y-m-d H:i:s', FECHA_INICIO) . "\n\n";
+    $message .= "Detalles de las operaciones:\n";
+    $message .= "----------------------------------------\n";
+    $message .= implode("\n", $resumen) . "\n";
     
-    $soporte1 = (object)['email' => EMAIL_SOPORTE];
-    $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
-    
-    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío del reporte final a " . EMAIL_SOPORTE . "\n";
-    }
-    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
-        echo "[ERROR] Falló el envío del reporte final a " . EMAIL_SOPORTE_ADICIONAL . "\n";
-    }
+    enviarCorreo(EMAIL_SOPORTE, $subject, $message);
+    enviarCorreo(EMAIL_SOPORTE_ADICIONAL, $subject, $message);
 }
 
 // =============================================================================
@@ -444,6 +414,8 @@ try {
         'errores' => 0
     ];
     
+    $resumen = []; // Array para almacenar el resumen de operaciones
+    
     // 2. Procesar cada registro
     foreach ($registros as $registro) {
         $resultados['total']++;
@@ -451,34 +423,36 @@ try {
         try {
             switch ($registro['VALORTIPO']) {
                 case TIPO_CANCELACION:
-                    if (procesarCancelacion($registro, $modoPrueba)) {
+                    if (procesarCancelacion($registro, $modoPrueba, $resumen)) {
                         $resultados['cancelaciones']++;
                     }
                     break;
                     
                 case TIPO_ADICION:
-                    if (procesarAdicion($registro, $modoPrueba)) {
+                    if (procesarAdicion($registro, $modoPrueba, $resumen)) {
                         $resultados['adiciones']++;
                     }
                     break;
                     
                 case TIPO_CAMBIO_GRUPO:
-                    procesarCambioGrupo($registro, $modoPrueba);
+                    procesarCambioGrupo($registro, $modoPrueba, $resumen);
                     $resultados['cambios_grupo']++;
                     break;
                     
                 default:
                     echo "Tipo de operación no reconocido: {$registro['VALORTIPO']}\n";
+                    $resumen[] = "[ERROR] Tipo de operación no reconocido: {$registro['VALORTIPO']}";
                     $resultados['errores']++;
             }
         } catch (Exception $e) {
             echo "ERROR procesando registro: " . $e->getMessage() . "\n";
+            $resumen[] = "[ERROR] Procesamiento fallido - " . $e->getMessage();
             $resultados['errores']++;
         }
     }
     
     // 3. Generar y enviar reporte final
-    enviarReporteFinal($resultados, $modoPrueba);
+    enviarReporteFinal($resultados, $modoPrueba, $resumen);
     
     // 4. Mostrar resumen
     echo "\n=== RESUMEN FINAL ===\n";
