@@ -50,6 +50,7 @@ global $DB, $CFG;
 // =============================================================================
 
 define('EMAIL_SOPORTE', 'soporteunivirtual@utp.edu.co');
+define('EMAIL_UNIVIRTUAL', 'univirtual-utp@utp.edu.co');
 define('FECHA_INICIO', strtotime('2025-08-04 00:00:00')); // Fecha inicial para procesar registros
 
 // Tipos de operación
@@ -112,6 +113,22 @@ function obtenerRegistrosProcesar($conn) {
 }
 
 /**
+ * Envía notificación a ambos correos institucionales
+ */
+function enviarNotificacionAdministrativa($subject, $message) {
+    global $CFG;
+    
+    $usuarios = [
+        (object)['email' => EMAIL_SOPORTE],
+        (object)['email' => EMAIL_UNIVIRTUAL]
+    ];
+    
+    foreach ($usuarios as $usuario) {
+        email_to_user($usuario, $CFG->noreplyaddress, $subject, $message);
+    }
+}
+
+/**
  * Procesa cancelación de asignatura
  */
 function procesarCancelacion($registro, $modoPrueba) {
@@ -162,6 +179,17 @@ function procesarCancelacion($registro, $modoPrueba) {
     // Enviar correos de notificación
     enviarCorreoCancelacionEstudiante($user, $curso);
     enviarCorreoCancelacionDocente($user, $curso);
+    
+    // Notificar a soporte y univirtual
+    $subject = "Cancelación registrada - {$curso->shortname}";
+    $message = "Se ha procesado una cancelación para el estudiante:\n\n";
+    $message .= "Nombre: {$user->firstname} {$user->lastname}\n";
+    $message .= "Documento: {$username}\n";
+    $message .= "Curso: {$curso->fullname}\n";
+    $message .= "ID Grupo: {$idgrupo}\n";
+    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
+    
+    enviarNotificacionAdministrativa($subject, $message);
     
     return true;
 }
@@ -228,6 +256,17 @@ function procesarAdicion($registro, $modoPrueba) {
     
     // Enviar correo al estudiante
     enviarCorreoAdicionEstudiante($user, $curso);
+    
+    // Notificar a soporte y univirtual
+    $subject = "Adición registrada - {$curso->shortname}";
+    $message = "Se ha procesado una adición para el estudiante:\n\n";
+    $message .= "Nombre: {$user->firstname} {$user->lastname}\n";
+    $message .= "Documento: {$username}\n";
+    $message .= "Curso: {$curso->fullname}\n";
+    $message .= "ID Grupo: {$idgrupo}\n";
+    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
+    
+    enviarNotificacionAdministrativa($subject, $message);
     
     return true;
 }
@@ -299,8 +338,14 @@ function enviarCorreoUsuarioNoExiste($username, $idgrupo) {
     $message .= "Por favor crear el usuario manualmente.\n\n";
     $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
     
-    $user = (object)['email' => EMAIL_SOPORTE];
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
+    $usuarios = [
+        (object)['email' => EMAIL_SOPORTE],
+        (object)['email' => EMAIL_UNIVIRTUAL]
+    ];
+    
+    foreach ($usuarios as $usuario) {
+        email_to_user($usuario, $CFG->noreplyaddress, $subject, $message);
+    }
 }
 
 /**
@@ -335,8 +380,14 @@ function enviarCorreoCambioGrupo($registro) {
     $message .= "Fecha registro: {$registro['FECHACREACION']}\n\n";
     $message .= "Este cambio debe realizarse manualmente en Moodle.";
     
-    $user = (object)['email' => EMAIL_SOPORTE];
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
+    $usuarios = [
+        (object)['email' => EMAIL_SOPORTE],
+        (object)['email' => EMAIL_UNIVIRTUAL]
+    ];
+    
+    foreach ($usuarios as $usuario) {
+        email_to_user($usuario, $CFG->noreplyaddress, $subject, $message);
+    }
 }
 
 /**
@@ -355,8 +406,14 @@ function enviarReporteFinal($resultados, $modoPrueba) {
     $message .= "Errores encontrados: {$resultados['errores']}\n\n";
     $message .= "Fecha de inicio del filtro: ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
     
-    $user = (object)['email' => EMAIL_SOPORTE];
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
+    $usuarios = [
+        (object)['email' => EMAIL_SOPORTE],
+        (object)['email' => EMAIL_UNIVIRTUAL]
+    ];
+    
+    foreach ($usuarios as $usuario) {
+        email_to_user($usuario, $CFG->noreplyaddress, $subject, $message);
+    }
 }
 
 // =============================================================================
