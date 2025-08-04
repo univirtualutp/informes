@@ -253,7 +253,7 @@ function enviarCorreoCancelacionEstudiante($user, $curso) {
     $subject = "Cancelación de asignatura - {$curso->fullname}";
     $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
     $message .= "Te informamos que tu matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
-    $message .= "Si tienes dudas o es un error, comunícate a través del WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
+    $message .= "Si tienes dudas o es un error, comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
     $message .= "Atentamente,\n";
     $message .= "Univirtual UTP";
     
@@ -280,7 +280,7 @@ function enviarCorreoCancelacionDocente($user, $curso) {
     $message .= "El estudiante {$user->firstname} {$user->lastname} ({$user->email}) ";
     $message .= "ha cancelado la asignatura {$curso->fullname}.\n\n";
     $message .= "Atentamente,\n";
-    $message .= "Univirtual UTP;
+    $message .= "Univirtual UTP";
     
     foreach ($profesores as $profesor) {
         email_to_user($profesor, $CFG->noreplyaddress, $subject, $message);
@@ -315,7 +315,7 @@ function enviarCorreoAdicionEstudiante($user, $curso) {
     $message .= "Para acceder al curso, ingrese al campus virtual con su número de documento ";
     $message .= "y su contraseña.\n\n";
     $message .= "Atentamente,\n";
-    $message .= "Universidad UTP";
+    $message .= "Univirtual UTP";
     
     email_to_user($user, $CFG->noreplyaddress, $subject, $message);
 }
