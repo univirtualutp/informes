@@ -173,8 +173,13 @@ function procesarCancelacion($registro, $modoPrueba) {
     
     $soporte1 = (object)['email' => EMAIL_SOPORTE];
     $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
-    email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message);
-    email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message);
+    
+    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de cancelación a " . EMAIL_SOPORTE . "\n";
+    }
+    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de cancelación a " . EMAIL_SOPORTE_ADICIONAL . "\n";
+    }
     
     return true;
 }
@@ -251,8 +256,13 @@ function procesarAdicion($registro, $modoPrueba) {
     
     $soporte1 = (object)['email' => EMAIL_SOPORTE];
     $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
-    email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message);
-    email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message);
+    
+    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de adición a " . EMAIL_SOPORTE . "\n";
+    }
+    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de adición a " . EMAIL_SOPORTE_ADICIONAL . "\n";
+    }
     
     return true;
 }
@@ -278,11 +288,13 @@ function enviarCorreoCancelacionEstudiante($user, $curso) {
     $subject = "Cancelación de asignatura - {$curso->fullname}";
     $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
     $message .= "Te informamos que tu matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
-    $message .= "Si tienes dudas comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
+    $message .= "Si tienes dudas o es un error, comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
     $message .= "Atentamente,\n";
     $message .= "Univirtual UTP";
     
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
+    if (!email_to_user($user, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de cancelación al estudiante {$user->email}\n";
+    }
 }
 
 /**
@@ -308,7 +320,9 @@ function enviarCorreoCancelacionDocente($user, $curso) {
     $message .= "Univirtual UTP";
     
     foreach ($profesores as $profesor) {
-        email_to_user($profesor, $CFG->noreplyaddress, $subject, $message);
+        if (!email_to_user($profesor, $CFG->noreplyaddress, $subject, $message)) {
+            echo "[ERROR] Falló el envío de correo de cancelación al docente {$profesor->email}\n";
+        }
     }
 }
 
@@ -324,8 +338,15 @@ function enviarCorreoUsuarioNoExiste($username, $idgrupo) {
     $message .= "Por favor crear el usuario manualmente.\n\n";
     $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
     
-    $user = (object)['email' => EMAIL_SOPORTE];
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
+    $soporte1 = (object)['email' => EMAIL_SOPORTE];
+    $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
+    
+    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de usuario no existente a " . EMAIL_SOPORTE . "\n";
+    }
+    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de usuario no existente a " . EMAIL_SOPORTE_ADICIONAL . "\n";
+    }
 }
 
 /**
@@ -342,7 +363,9 @@ function enviarCorreoAdicionEstudiante($user, $curso) {
     $message .= "Atentamente,\n";
     $message .= "Univirtual UTP";
     
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
+    if (!email_to_user($user, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de adición al estudiante {$user->email}\n";
+    }
 }
 
 /**
@@ -360,8 +383,15 @@ function enviarCorreoCambioGrupo($registro) {
     $message .= "Fecha registro: {$registro['FECHACREACION']}\n\n";
     $message .= "Este cambio debe realizarse manualmente en Moodle.";
     
-    $user = (object)['email' => EMAIL_SOPORTE];
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
+    $soporte1 = (object)['email' => EMAIL_SOPORTE];
+    $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
+    
+    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de cambio de grupo a " . EMAIL_SOPORTE . "\n";
+    }
+    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío de correo de cambio de grupo a " . EMAIL_SOPORTE_ADICIONAL . "\n";
+    }
 }
 
 /**
@@ -380,8 +410,15 @@ function enviarReporteFinal($resultados, $modoPrueba) {
     $message .= "Errores encontrados: {$resultados['errores']}\n\n";
     $message .= "Fecha de inicio del filtro: ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
     
-    $user = (object)['email' => EMAIL_SOPORTE];
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
+    $soporte1 = (object)['email' => EMAIL_SOPORTE];
+    $soporte2 = (object)['email' => EMAIL_SOPORTE_ADICIONAL];
+    
+    if (!email_to_user($soporte1, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío del reporte final a " . EMAIL_SOPORTE . "\n";
+    }
+    if (!email_to_user($soporte2, $CFG->noreplyaddress, $subject, $message)) {
+        echo "[ERROR] Falló el envío del reporte final a " . EMAIL_SOPORTE_ADICIONAL . "\n";
+    }
 }
 
 // =============================================================================
