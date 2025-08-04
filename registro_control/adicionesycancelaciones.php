@@ -252,10 +252,10 @@ function enviarCorreoCancelacionEstudiante($user, $curso) {
     
     $subject = "Cancelación de asignatura - {$curso->fullname}";
     $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
-    $message .= "Le informamos que su matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
-    $message .= "a través de WhatsApp: https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\n\n";
+    $message .= "Te informamos que tu matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
+    $message .= "Si tienes dudas o es un error, comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
     $message .= "Atentamente,\n";
-    $message .= "Universidad UTP";
+    $message .= "Univirtual UTP";
     
     email_to_user($user, $CFG->noreplyaddress, $subject, $message);
 }
