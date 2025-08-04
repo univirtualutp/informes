@@ -5,7 +5,10 @@
  * Uso normal: php adicionesycancelaciones.php
  * Modo prueba: php adicionesycancelaciones.php --dry-run
  * 
- * Modificado para evitar reprocesamiento de registros ya procesados
+ * Modificado para:
+ * 1. Evitar reprocesamiento de registros
+ * 2. Generar reporte CSV adjunto
+ * 3. Mantener resumen textual
  */
 
 // =============================================================================
@@ -83,6 +86,42 @@ function enviarCorreo($to, $subject, $message) {
         return true;
     } else {
         echo "[ERROR] Falló el envío de correo a $to\n";
+        return false;
+    }
+}
+
+/**
+ * Envía correo con archivo adjunto
+ */
+function enviarCorreoConAdjunto($to, $subject, $message, $filePath, $fileName) {
+    $boundary = uniqid('np');
+    
+    $headers = "MIME-Version: 1.0\r\n";
+    $headers .= "From: " . FROM_EMAIL . "\r\n";
+    $headers .= "Content-Type: multipart/mixed; boundary=$boundary\r\n";
+    
+    // Mensaje en texto plano
+    $body = "--$boundary\r\n";
+    $body .= "Content-Type: text/plain; charset=UTF-8\r\n";
+    $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
+    $body .= $message . "\r\n";
+    
+    // Adjuntar archivo
+    $fileContent = file_get_contents($filePath);
+    $fileContent = chunk_split(base64_encode($fileContent));
+    
+    $body .= "--$boundary\r\n";
+    $body .= "Content-Type: application/octet-stream; name=\"$fileName\"\r\n";
+    $body .= "Content-Transfer-Encoding: base64\r\n";
+    $body .= "Content-Disposition: attachment; filename=\"$fileName\"\r\n\r\n";
+    $body .= $fileContent . "\r\n";
+    $body .= "--$boundary--";
+    
+    if (mail($to, $subject, $body, $headers)) {
+        echo "[INFO] Correo con adjunto enviado a $to\n";
+        return true;
+    } else {
+        echo "[ERROR] Falló el envío de correo con adjunto a $to\n";
         return false;
     }
 }
@@ -188,7 +227,7 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
     if (!$curso) {
         echo "[CANCELACIÓN] Curso no encontrado para IDGRUPO: $idgrupo\n";
-        $resumen[] = "[ERROR] Cancelación fallida - Curso no encontrado para IDGRUPO: $idgrupo";
+        $resumen[] = "[ERROR] Cancelación fallida - Curso no encontrado para IDGRUPO: $idgrupo, Username: $username";
         return false;
     }
     
@@ -202,7 +241,7 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     
     if ($modoPrueba) {
         echo "[SIMULACIÓN] Se cambiaría rol de $username a DESMATRICULADO en curso {$curso->fullname}\n";
-        $resumen[] = "[SIMULACIÓN] Cancelación - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo)";
+        $resumen[] = "[SIMULACIÓN] Cancelación - Username: $username, Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo)";
         return true;
     }
     
@@ -230,7 +269,7 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     registrarProcesado($idgrupo, $username, TIPO_CANCELACION);
     
     // Agregar al resumen
-    $resumen[] = "Cancelación procesada - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha: " . date('Y-m-d H:i:s');
+    $resumen[] = "Cancelación procesada - Username: $username, Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha: " . date('Y-m-d H:i:s');
     
     // Enviar correos de notificación
     enviarCorreoCancelacionEstudiante($user, $curso);
@@ -258,7 +297,7 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
     if (!$curso) {
         echo "[ADICIÓN] Curso no encontrado para IDGRUPO: $idgrupo\n";
-        $resumen[] = "[ERROR] Adición fallida - Curso no encontrado para IDGRUPO: $idgrupo";
+        $resumen[] = "[ERROR] Adición fallida - Curso no encontrado para IDGRUPO: $idgrupo, Username: $username";
         return false;
     }
     
@@ -273,7 +312,7 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     
     if ($modoPrueba) {
         echo "[SIMULACIÓN] Se matricularía a $username en curso {$curso->fullname}\n";
-        $resumen[] = "[SIMULACIÓN] Adición - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo)";
+        $resumen[] = "[SIMULACIÓN] Adición - Username: $username, Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo)";
         return true;
     }
     
@@ -313,7 +352,7 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     registrarProcesado($idgrupo, $username, TIPO_ADICION);
     
     // Agregar al resumen
-    $resumen[] = "Adición procesada - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha: " . date('Y-m-d H:i:s');
+    $resumen[] = "Adición procesada - Username: $username, Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha: " . date('Y-m-d H:i:s');
     
     // Enviar correo al estudiante
     enviarCorreoAdicionEstudiante($user, $curso);
@@ -336,12 +375,12 @@ function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
     
     if ($modoPrueba) {
         echo "[SIMULACIÓN] Se reportaría cambio de grupo para {$registro['NUMERODOCUMENTO']}\n";
-        $resumen[] = "[SIMULACIÓN] Cambio de grupo - Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}";
+        $resumen[] = "[SIMULACIÓN] Cambio de grupo - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}";
     } else {
         // Registrar como procesado
         registrarProcesado($idgrupo, $username, TIPO_CAMBIO_GRUPO);
         
-        $resumen[] = "Cambio de grupo reportado - Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}, Fecha: " . date('Y-m-d H:i:s');
+        $resumen[] = "Cambio de grupo reportado - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}, Fecha: " . date('Y-m-d H:i:s');
     }
     
     if (!$modoPrueba) {
@@ -426,6 +465,7 @@ function enviarCorreoAdicionEstudiante($user, $curso) {
 function enviarCorreoCambioGrupo($registro) {
     $subject = "Cambio de grupo requerido - {$registro['NUMERODOCUMENTO']}";
     $message = "Se requiere cambio de grupo para el estudiante:\n\n";
+    $message .= "Username: {$registro['NUMERODOCUMENTO']}\n";
     $message .= "Documento: {$registro['NUMERODOCUMENTO']}\n";
     $message .= "Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}\n";
     $message .= "ID Grupo actual: {$registro['IDGRUPO']}\n";
@@ -438,11 +478,12 @@ function enviarCorreoCambioGrupo($registro) {
 }
 
 /**
- * Envía reporte final de ejecución
+ * Envía reporte final de ejecución con CSV adjunto
  */
 function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     $subject = ($modoPrueba ? "[PRUEBA] " : "") . "Reporte de Adiciones/Cancelaciones - " . date('Y-m-d H:i:s');
     
+    // Crear contenido del correo (texto plano)
     $message = "Reporte de ejecución " . ($modoPrueba ? "en modo prueba" : "en producción") . "\n\n";
     $message .= "Total registros procesados: {$resultados['total']}\n";
     $message .= "Cancelaciones procesadas: {$resultados['cancelaciones']}\n";
@@ -454,8 +495,73 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     $message .= "----------------------------------------\n";
     $message .= implode("\n", $resumen) . "\n";
     
-    enviarCorreo(EMAIL_SOPORTE, $subject, $message);
-    enviarCorreo(EMAIL_SOPORTE_ADICIONAL, $subject, $message);
+    // Crear archivo CSV temporal
+    $csvFileName = tempnam(sys_get_temp_dir(), 'reporte_') . '.csv';
+    $csvFile = fopen($csvFileName, 'w');
+    
+    // Escribir encabezados CSV
+    fputcsv($csvFile, [
+        'Tipo Operación',
+        'Username',
+        'Nombre Completo',
+        'Email',
+        'ID Grupo',
+        'Asignatura',
+        'Fecha Procesamiento',
+        'Estado'
+    ], ';'); // Usamos ; como delimitador para mejor compatibilidad con Excel
+    
+    // Procesar el resumen para extraer datos para CSV
+    foreach ($resumen as $linea) {
+        // Procesar operaciones exitosas
+        if (preg_match('/(Cancelación|Adición|Cambio de grupo).*Username: (.*?),.*Estudiante: (.*?) (.*?) \((.*?)\).*IDGRUPO: (\d+).*Fecha: (.*)/', $linea, $matches)) {
+            fputcsv($csvFile, [
+                $matches[1], // Tipo operación
+                $matches[2], // Username
+                $matches[3].' '.$matches[4], // Nombre completo
+                $matches[5], // Email
+                $matches[6], // ID Grupo
+                '', // Asignatura (se obtendrá después)
+                $matches[7], // Fecha
+                'Completado'
+            ], ';');
+        }
+        // Procesar errores
+        elseif (preg_match('/\[ERROR\].*Username: (.*?),/', $linea, $matches)) {
+            fputcsv($csvFile, [
+                'Error',
+                $matches[1],
+                '',
+                '',
+                '',
+                '',
+                date('Y-m-d H:i:s'),
+                'Fallido'
+            ], ';');
+        }
+    }
+    
+    fclose($csvFile);
+    
+    // Enviar correo con adjunto
+    enviarCorreoConAdjunto(
+        EMAIL_SOPORTE, 
+        $subject, 
+        $message, 
+        $csvFileName,
+        'reporte_adiciones_cancelaciones_' . date('Y-m-d') . '.csv'
+    );
+    
+    enviarCorreoConAdjunto(
+        EMAIL_SOPORTE_ADICIONAL, 
+        $subject, 
+        $message, 
+        $csvFileName,
+        'reporte_adiciones_cancelaciones_' . date('Y-m-d') . '.csv'
+    );
+    
+    // Eliminar archivo temporal
+    unlink($csvFileName);
 }
 
 // =============================================================================
@@ -512,12 +618,12 @@ try {
                     
                 default:
                     echo "Tipo de operación no reconocido: {$registro['VALORTIPO']}\n";
-                    $resumen[] = "[ERROR] Tipo de operación no reconocido: {$registro['VALORTIPO']}";
+                    $resumen[] = "[ERROR] Tipo de operación no reconocido: {$registro['VALORTIPO']}, Username: {$registro['NUMERODOCUMENTO']}";
                     $resultados['errores']++;
             }
         } catch (Exception $e) {
             echo "ERROR procesando registro: " . $e->getMessage() . "\n";
-            $resumen[] = "[ERROR] Procesamiento fallido - " . $e->getMessage();
+            $resumen[] = "[ERROR] Procesamiento fallido - " . $e->getMessage() . ", Username: {$registro['NUMERODOCUMENTO']}";
             $resultados['errores']++;
         }
     }
