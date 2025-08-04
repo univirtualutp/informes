@@ -4,6 +4,8 @@
  * 
  * Uso normal: php adicionesycancelaciones.php
  * Modo prueba: php adicionesycancelaciones.php --dry-run
+ * 
+ * Modificado para evitar reprocesamiento de registros ya procesados
  */
 
 // =============================================================================
@@ -53,6 +55,7 @@ define('EMAIL_SOPORTE', 'soporteunivirtual@utp.edu.co');
 define('EMAIL_SOPORTE_ADICIONAL', 'univirtual-utp@utp.edu.co');
 define('FECHA_INICIO', strtotime('2025-08-04 00:00:00')); // Fecha inicial para procesar registros
 define('FROM_EMAIL', 'noreply@utp.edu.co'); // Dirección de correo para el remitente
+define('REGISTRO_PROCESADOS_FILE', __DIR__.'/procesados_'.date('Y-m-d').'.log'); // Archivo de registros procesados
 
 // Tipos de operación
 define('TIPO_CANCELACION', 'CANCELACIÓN');
@@ -81,6 +84,38 @@ function enviarCorreo($to, $subject, $message) {
     } else {
         echo "[ERROR] Falló el envío de correo a $to\n";
         return false;
+    }
+}
+
+/**
+ * Registra los IDs de grupo + usuario ya procesados
+ */
+function registrarProcesado($idgrupo, $usuario, $tipo) {
+    $linea = "$idgrupo|$usuario|$tipo|".date('Y-m-d H:i:s')."\n";
+    file_put_contents(REGISTRO_PROCESADOS_FILE, $linea, FILE_APPEND);
+}
+
+/**
+ * Verifica si ya fue procesado
+ */
+function yaProcesado($idgrupo, $usuario, $tipo) {
+    if (!file_exists(REGISTRO_PROCESADOS_FILE)) return false;
+    
+    $contenido = file_get_contents(REGISTRO_PROCESADOS_FILE);
+    $busqueda = "$idgrupo|$usuario|$tipo|";
+    return strpos($contenido, $busqueda) !== false;
+}
+
+/**
+ * Limpia archivos de registro antiguos
+ */
+function limpiarRegistrosAntiguos() {
+    $files = glob(__DIR__.'/procesados_*.log');
+    $now = time();
+    foreach ($files as $file) {
+        if (is_file($file) && ($now - filemtime($file)) > 7 * 86400) {
+            unlink($file);
+        }
     }
 }
 
@@ -143,6 +178,12 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     $idgrupo = $registro['IDGRUPO'];
     $username = $registro['NUMERODOCUMENTO'];
     
+    // Verificar si ya fue procesado
+    if (yaProcesado($idgrupo, $username, TIPO_CANCELACION)) {
+        echo "[INFO] Cancelación ya procesada anteriormente para $username en grupo $idgrupo\n";
+        return false;
+    }
+    
     // Buscar curso en Moodle
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
     if (!$curso) {
@@ -185,6 +226,9 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     
     $DB->insert_record('role_assignments', $role_assign);
     
+    // Registrar como procesado
+    registrarProcesado($idgrupo, $username, TIPO_CANCELACION);
+    
     // Agregar al resumen
     $resumen[] = "Cancelación procesada - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha: " . date('Y-m-d H:i:s');
     
@@ -203,6 +247,12 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     
     $idgrupo = $registro['IDGRUPO'];
     $username = $registro['NUMERODOCUMENTO'];
+    
+    // Verificar si ya fue procesado
+    if (yaProcesado($idgrupo, $username, TIPO_ADICION)) {
+        echo "[INFO] Adición ya procesada anteriormente para $username en grupo $idgrupo\n";
+        return false;
+    }
     
     // Buscar curso en Moodle
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
@@ -259,6 +309,9 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     ];
     $DB->insert_record('user_enrolments', (object)$user_enrolment);
     
+    // Registrar como procesado
+    registrarProcesado($idgrupo, $username, TIPO_ADICION);
+    
     // Agregar al resumen
     $resumen[] = "Adición procesada - Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha: " . date('Y-m-d H:i:s');
     
@@ -272,14 +325,28 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
  * Procesa cambio de grupo
  */
 function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
+    $idgrupo = $registro['IDGRUPO'];
+    $username = $registro['NUMERODOCUMENTO'];
+    
+    // Verificar si ya fue procesado
+    if (yaProcesado($idgrupo, $username, TIPO_CAMBIO_GRUPO)) {
+        echo "[INFO] Cambio de grupo ya procesado anteriormente para $username en grupo $idgrupo\n";
+        return false;
+    }
+    
     if ($modoPrueba) {
         echo "[SIMULACIÓN] Se reportaría cambio de grupo para {$registro['NUMERODOCUMENTO']}\n";
         $resumen[] = "[SIMULACIÓN] Cambio de grupo - Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}";
     } else {
+        // Registrar como procesado
+        registrarProcesado($idgrupo, $username, TIPO_CAMBIO_GRUPO);
+        
         $resumen[] = "Cambio de grupo reportado - Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}, Fecha: " . date('Y-m-d H:i:s');
     }
     
-    enviarCorreoCambioGrupo($registro);
+    if (!$modoPrueba) {
+        enviarCorreoCambioGrupo($registro);
+    }
     return true;
 }
 
@@ -396,6 +463,9 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
 // =============================================================================
 
 try {
+    // Limpiar registros antiguos
+    limpiarRegistrosAntiguos();
+    
     echo "Iniciando proceso de adiciones y cancelaciones " . ($modoPrueba ? "en MODO PRUEBA" : "") . "...\n";
     echo "Filtrando registros con fecha CREACIÓN >= ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
     
@@ -435,8 +505,9 @@ try {
                     break;
                     
                 case TIPO_CAMBIO_GRUPO:
-                    procesarCambioGrupo($registro, $modoPrueba, $resumen);
-                    $resultados['cambios_grupo']++;
+                    if (procesarCambioGrupo($registro, $modoPrueba, $resumen)) {
+                        $resultados['cambios_grupo']++;
+                    }
                     break;
                     
                 default:
