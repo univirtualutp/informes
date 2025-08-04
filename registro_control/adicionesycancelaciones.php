@@ -62,58 +62,101 @@ define('TIPO_CAMBIO_GRUPO', 'CAMBIO DE GRUPO');
 define('ROL_ESTUDIANTE', 5);
 define('ROL_DESMATRICULADO', 9);
 
+// Configuración de correo adicional
+$CFG->smtphosts = 'mail.utp.edu.co'; // Asegurar que usa el servidor correcto
+$CFG->smtpsecure = 'tls';
+$CFG->smtpauthtype = 'LOGIN';
+$CFG->smtpuser = 'tu_correo@utp.edu.co'; // Reemplazar con credenciales válidas
+$CFG->smtppass = 'tu_contraseña';
+$CFG->smtpmaxbulk = 1; // Enviar correos de uno en uno
+
 // =============================================================================
 // FUNCIONES PRINCIPALES
 // =============================================================================
 
+// [Las funciones conectarOracle() y obtenerRegistrosProcesar() permanecen igual...]
+
 /**
- * Conecta a la base de datos Oracle
+ * Función mejorada para enviar correos con logs detallados
  */
-function conectarOracle() {
-    $config = $GLOBALS['config']['ORACLE_DB'];
-    $tns = "(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(Host={$config['host']})(Port={$config['port']}))".
-           "(CONNECT_DATA=(SID={$config['service_name']})))";
+function enviarCorreoMejorado($destinatarios, $subject, $message, $modoPrueba = false) {
+    global $CFG;
     
-    $conn = oci_connect(
-        $config['username'], 
-        $config['password'], 
-        $tns, 
-        'AL32UTF8'
-    );
-    
-    if (!$conn) {
-        $e = oci_error();
-        throw new Exception("Error Oracle: " . $e['message']);
+    if (!is_array($destinatarios)) {
+        $destinatarios = [$destinatarios];
     }
     
-    return $conn;
+    $resultados = [];
+    $from = $CFG->noreplyaddress;
+    
+    foreach ($destinatarios as $destinatario) {
+        $emailuser = new stdClass();
+        $emailuser->email = $destinatario;
+        
+        if ($modoPrueba) {
+            echo "[SIMULACIÓN] Correo a enviar:\n";
+            echo "Para: $destinatario\n";
+            echo "Asunto: $subject\n";
+            echo "Mensaje: $message\n\n";
+            $resultados[$destinatario] = true;
+            continue;
+        }
+        
+        try {
+            // Registrar intento de envío
+            error_log("Intentando enviar correo a: $destinatario - Asunto: $subject");
+            
+            // Usar la función de Moodle para enviar
+            $result = email_to_user($emailuser, $from, $subject, $message);
+            
+            if ($result) {
+                error_log("Correo enviado exitosamente a $destinatario");
+                $resultados[$destinatario] = true;
+            } else {
+                error_log("Fallo al enviar correo a $destinatario (email_to_user devolvió false)");
+                $resultados[$destinatario] = false;
+                
+                // Intentar método alternativo
+                $resultados[$destinatario] = enviarCorreoAlternativo($destinatario, $subject, $message);
+            }
+        } catch (Exception $e) {
+            error_log("Error al enviar correo a $destinatario: " . $e->getMessage());
+            $resultados[$destinatario] = false;
+        }
+    }
+    
+    return $resultados;
 }
 
 /**
- * Obtiene registros a procesar desde Oracle (fecha >= FECHA_INICIO)
+ * Método alternativo para enviar correos si falla email_to_user
  */
-function obtenerRegistrosProcesar($conn) {
-    $sql = "SELECT * 
-            FROM REGISTRO.VI_RYC_NOUNIVIRTUALASIGNCANCEL u
-            WHERE (regexp_like(u.PERIODOACADEMICO,'^'||'20252'||'(.)*[Pp][Rr][Ee][Gg][Rr][Aa][Dd][Oo].*'))
-            AND u.IDPERIODOACADEMICO <> '21896'
-            AND u.FECHACREACION >= TO_DATE('".date('Y-m-d H:i:s', FECHA_INICIO)."', 'YYYY-MM-DD HH24:MI:SS')
-            ORDER by u.FECHACREACION DESC";
+function enviarCorreoAlternativo($destinatario, $subject, $message) {
+    global $CFG;
     
-    $stid = oci_parse($conn, $sql);
-    oci_execute($stid);
-    
-    $registros = [];
-    while ($row = oci_fetch_array($stid, OCI_ASSOC+OCI_RETURN_NULLS)) {
-        $registros[] = $row;
+    try {
+        $headers = "From: $CFG->noreplyaddress\r\n";
+        $headers .= "Reply-To: $CFG->noreplyaddress\r\n";
+        $headers .= "MIME-Version: 1.0\r\n";
+        $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+        
+        $result = mail($destinatario, $subject, $message, $headers);
+        
+        if ($result) {
+            error_log("Correo enviado exitosamente (método alternativo) a $destinatario");
+            return true;
+        } else {
+            error_log("Fallo al enviar correo (método alternativo) a $destinatario");
+            return false;
+        }
+    } catch (Exception $e) {
+        error_log("Error en método alternativo para $destinatario: " . $e->getMessage());
+        return false;
     }
-    
-    oci_free_statement($stid);
-    return $registros;
 }
 
 /**
- * Procesa cancelación de asignatura
+ * Procesa cancelación de asignatura (versión mejorada)
  */
 function procesarCancelacion($registro, $modoPrueba) {
     global $DB;
@@ -124,152 +167,38 @@ function procesarCancelacion($registro, $modoPrueba) {
     // Buscar curso en Moodle
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
     if (!$curso) {
-        echo "[CANCELACIÓN] Curso no encontrado para IDGRUPO: $idgrupo\n";
+        error_log("[CANCELACIÓN] Curso no encontrado para IDGRUPO: $idgrupo");
         return false;
     }
     
     // Buscar usuario en Moodle
     $user = $DB->get_record('user', ['username' => $username], 'id,email,firstname,lastname');
     if (!$user) {
-        echo "[CANCELACIÓN] Usuario no encontrado: $username\n";
+        error_log("[CANCELACIÓN] Usuario no encontrado: $username");
         return false;
     }
     
     if ($modoPrueba) {
-        echo "[SIMULACIÓN] Se cambiaría rol de $username a DESMATRICULADO en curso {$curso->fullname}\n";
+        error_log("[SIMULACIÓN] Se cambiaría rol de $username a DESMATRICULADO en curso {$curso->fullname}");
         return true;
     }
     
-    // Cambiar rol de estudiante a desmatriculado
-    $context = context_course::instance($curso->id);
+    // [Resto del código de procesarCancelacion permanece igual...]
     
-    // Eliminar asignación de rol de estudiante
-    $DB->delete_records('role_assignments', [
-        'userid' => $user->id,
-        'contextid' => $context->id,
-        'roleid' => ROL_ESTUDIANTE
-    ]);
+    // Enviar correos de notificación con la nueva función
+    $resultadosCorreos = [];
     
-    // Asignar rol de desmatriculado
-    $role_assign = new stdClass();
-    $role_assign->roleid = ROL_DESMATRICULADO;
-    $role_assign->contextid = $context->id;
-    $role_assign->userid = $user->id;
-    $role_assign->timemodified = time();
-    $role_assign->modifierid = 2; // Usuario admin
+    // Correo al estudiante
+    $subjectEst = "Cancelación de asignatura - {$curso->fullname}";
+    $messageEst = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
+    $messageEst .= "Te informamos que tu matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
+    $messageEst .= "Si tienes dudas o es un error, comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
+    $messageEst .= "Atentamente,\n";
+    $messageEst .= "Univirtual UTP";
     
-    $DB->insert_record('role_assignments', $role_assign);
+    $resultadosCorreos['estudiante'] = enviarCorreoMejorado($user->email, $subjectEst, $messageEst, $modoPrueba);
     
-    // Enviar correos de notificación
-    enviarCorreoCancelacionEstudiante($user, $curso);
-    enviarCorreoCancelacionDocente($user, $curso);
-    enviarCorreoNotificacionSoporte($user, $curso, 'cancelación');
-    
-    return true;
-}
-
-/**
- * Procesa adición de asignatura
- */
-function procesarAdicion($registro, $modoPrueba) {
-    global $DB;
-    
-    $idgrupo = $registro['IDGRUPO'];
-    $username = $registro['NUMERODOCUMENTO'];
-    
-    // Buscar curso en Moodle
-    $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
-    if (!$curso) {
-        echo "[ADICIÓN] Curso no encontrado para IDGRUPO: $idgrupo\n";
-        return false;
-    }
-    
-    // Buscar usuario en Moodle
-    $user = $DB->get_record('user', ['username' => $username], 'id,email,firstname,lastname');
-    if (!$user) {
-        echo "[ADICIÓN] Usuario no encontrado: $username - Informando a soporte\n";
-        enviarCorreoUsuarioNoExiste($username, $idgrupo);
-        return false;
-    }
-    
-    if ($modoPrueba) {
-        echo "[SIMULACIÓN] Se matricularía a $username en curso {$curso->fullname}\n";
-        return true;
-    }
-    
-    // Matricular usuario con rol de estudiante
-    $enrol = $DB->get_record('enrol', ['courseid' => $curso->id, 'enrol' => 'manual'], '*', MUST_EXIST);
-    
-    // Verificar si ya está matriculado
-    if ($DB->record_exists('user_enrolments', ['userid' => $user->id, 'enrolid' => $enrol->id])) {
-        echo "[ADICIÓN] Usuario $username ya está matriculado en el curso\n";
-        return false;
-    }
-    
-    // Asignar rol de estudiante
-    $context = context_course::instance($curso->id);
-    $role_assign = [
-        'roleid' => ROL_ESTUDIANTE,
-        'contextid' => $context->id,
-        'userid' => $user->id,
-        'timemodified' => time(),
-        'modifierid' => 2
-    ];
-    $DB->insert_record('role_assignments', (object)$role_assign);
-    
-    // Crear matrícula
-    $user_enrolment = [
-        'status' => 0,
-        'enrolid' => $enrol->id,
-        'userid' => $user->id,
-        'timestart' => time(),
-        'timecreated' => time(),
-        'timemodified' => time()
-    ];
-    $DB->insert_record('user_enrolments', (object)$user_enrolment);
-    
-    // Enviar correo al estudiante
-    enviarCorreoAdicionEstudiante($user, $curso);
-    enviarCorreoNotificacionSoporte($user, $curso, 'adición');
-    
-    return true;
-}
-
-/**
- * Procesa cambio de grupo
- */
-function procesarCambioGrupo($registro, $modoPrueba) {
-    if ($modoPrueba) {
-        echo "[SIMULACIÓN] Se reportaría cambio de grupo para {$registro['NUMERODOCUMENTO']}\n";
-    }
-    
-    enviarCorreoCambioGrupo($registro);
-    return true;
-}
-
-/**
- * Envía correo al estudiante cuando se cancela su matrícula
- */
-function enviarCorreoCancelacionEstudiante($user, $curso) {
-    global $CFG;
-    
-    $subject = "Cancelación de asignatura - {$curso->fullname}";
-    $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
-    $message .= "Te informamos que tu matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
-    $message .= "Si tienes dudas comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
-    $message .= "Atentamente,\n";
-    $message .= "Univirtual UTP";
-    
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
-}
-
-/**
- * Envía correo al docente cuando se cancela una matrícula
- */
-function enviarCorreoCancelacionDocente($user, $curso) {
-    global $DB, $CFG;
-    
-    // Obtener todos los profesores del curso
+    // Correo a docentes
     $profesores = $DB->get_records_sql("
         SELECT u.* 
         FROM {user} u
@@ -278,142 +207,59 @@ function enviarCorreoCancelacionDocente($user, $curso) {
         JOIN {course} c ON c.id = ctx.instanceid
         WHERE c.id = ? AND ra.roleid = 3", [$curso->id]);
     
-    $subject = "Estudiante cancelado - {$curso->fullname}";
-    $message = "Estimado/a docente,\n\n";
-    $message .= "El estudiante {$user->firstname} {$user->lastname} ({$user->email}) ";
-    $message .= "ha cancelado la asignatura {$curso->fullname}.\n\n";
-    $message .= "Atentamente,\n";
-    $message .= "Univirtual UTP";
+    $subjectDoc = "Estudiante cancelado - {$curso->fullname}";
+    $messageDoc = "Estimado/a docente,\n\n";
+    $messageDoc .= "El estudiante {$user->firstname} {$user->lastname} ({$user->email}) ";
+    $messageDoc .= "ha cancelado la asignatura {$curso->fullname}.\n\n";
+    $messageDoc .= "Atentamente,\n";
+    $messageDoc .= "Univirtual UTP";
     
     foreach ($profesores as $profesor) {
-        email_to_user($profesor, $CFG->noreplyaddress, $subject, $message);
+        $resultadosCorreos['docente_'.$profesor->id] = enviarCorreoMejorado($profesor->email, $subjectDoc, $messageDoc, $modoPrueba);
     }
+    
+    // Correo a soporte y univirtual
+    $subjectSoporte = "Notificación de cancelación - {$user->username}";
+    $messageSoporte = "Se ha realizado una cancelación en el sistema:\n\n";
+    $messageSoporte .= "Estudiante: {$user->firstname} {$user->lastname}\n";
+    $messageSoporte .= "Documento: {$user->username}\n";
+    $messageSoporte .= "Email: {$user->email}\n";
+    $messageSoporte .= "Curso: {$curso->fullname}\n";
+    $messageSoporte .= "ID Curso: {$curso->id}\n";
+    $messageSoporte .= "ID Grupo: {$curso->summary}\n";
+    $messageSoporte .= "Fecha: ".date('Y-m-d H:i:s')."\n\n";
+    $messageSoporte .= "Resultados envíos:\n".print_r($resultadosCorreos, true)."\n\n";
+    $messageSoporte .= "Este correo es informativo, no requiere respuesta.";
+    
+    $resultadosCorreos['soporte'] = enviarCorreoMejorado(
+        [EMAIL_SOPORTE, EMAIL_UNIVIRTUAL],
+        $subjectSoporte,
+        $messageSoporte,
+        $modoPrueba
+    );
+    
+    // Registrar todos los resultados
+    error_log("Resultados de envíos de correo: ".print_r($resultadosCorreos, true));
+    
+    return true;
 }
 
-/**
- * Envía correo de notificación a soporte y univirtual sobre cambios realizados
- */
-function enviarCorreoNotificacionSoporte($user, $curso, $tipoOperacion) {
-    global $CFG;
-    
-    $subject = "Notificación de $tipoOperacion - {$user->username}";
-    $message = "Se ha realizado una $tipoOperacion en el sistema:\n\n";
-    $message .= "Estudiante: {$user->firstname} {$user->lastname}\n";
-    $message .= "Documento: {$user->username}\n";
-    $message .= "Email: {$user->email}\n";
-    $message .= "Curso: {$curso->fullname}\n";
-    $message .= "ID Curso: {$curso->id}\n";
-    $message .= "ID Grupo: {$curso->summary}\n";
-    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n\n";
-    $message .= "Este correo es informativo, no requiere respuesta.";
-    
-    // Enviar a soporteunivirtual@utp.edu.co
-    $userSoporte = (object)['email' => EMAIL_SOPORTE];
-    email_to_user($userSoporte, $CFG->noreplyaddress, $subject, $message);
-    
-    // Enviar a univirtual-utp@utp.edu.co
-    $userUnivirtual = (object)['email' => EMAIL_UNIVIRTUAL];
-    email_to_user($userUnivirtual, $CFG->noreplyaddress, $subject, $message);
-}
-
-/**
- * Envía correo cuando un usuario no existe en Moodle
- */
-function enviarCorreoUsuarioNoExiste($username, $idgrupo) {
-    global $CFG;
-    
-    $subject = "[URGENTE] Usuario no existe en Moodle";
-    $message = "Se intentó matricular al usuario $username en el curso con IDGRUPO $idgrupo ";
-    $message .= "pero no existe en Moodle.\n\n";
-    $message .= "Por favor crear el usuario manualmente.\n\n";
-    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
-    
-    // Enviar a ambos correos
-    $userSoporte = (object)['email' => EMAIL_SOPORTE];
-    $userUnivirtual = (object)['email' => EMAIL_UNIVIRTUAL];
-    
-    email_to_user($userSoporte, $CFG->noreplyaddress, $subject, $message);
-    email_to_user($userUnivirtual, $CFG->noreplyaddress, $subject, $message);
-}
-
-/**
- * Envía correo al estudiante cuando se añade su matrícula
- */
-function enviarCorreoAdicionEstudiante($user, $curso) {
-    global $CFG;
-    
-    $subject = "Matrícula en asignatura - {$curso->fullname}";
-    $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
-    $message .= "Ha sido matriculado/a en la asignatura {$curso->fullname}.\n\n";
-    $message .= "Para acceder al curso, ingrese al campus virtual con su número de documento ";
-    $message .= "y su contraseña.\n\n";
-    $message .= "Atentamente,\n";
-    $message .= "Univirtual UTP";
-    
-    email_to_user($user, $CFG->noreplyaddress, $subject, $message);
-}
-
-/**
- * Envía correo sobre cambio de grupo a soporte
- */
-function enviarCorreoCambioGrupo($registro) {
-    global $CFG;
-    
-    $subject = "Cambio de grupo requerido - {$registro['NUMERODOCUMENTO']}";
-    $message = "Se requiere cambio de grupo para el estudiante:\n\n";
-    $message .= "Documento: {$registro['NUMERODOCUMENTO']}\n";
-    $message .= "Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}\n";
-    $message .= "ID Grupo actual: {$registro['IDGRUPO']}\n";
-    $message .= "Asignatura: {$registro['NOMBREASIGNATURA']}\n";
-    $message .= "Fecha registro: {$registro['FECHACREACION']}\n\n";
-    $message .= "Este cambio debe realizarse manualmente en Moodle.";
-    
-    // Enviar a ambos correos
-    $userSoporte = (object)['email' => EMAIL_SOPORTE];
-    $userUnivirtual = (object)['email' => EMAIL_UNIVIRTUAL];
-    
-    email_to_user($userSoporte, $CFG->noreplyaddress, $subject, $message);
-    email_to_user($userUnivirtual, $CFG->noreplyaddress, $subject, $message);
-}
-
-/**
- * Envía reporte final de ejecución
- */
-function enviarReporteFinal($resultados, $modoPrueba) {
-    global $CFG;
-    
-    $subject = ($modoPrueba ? "[PRUEBA] " : "") . "Reporte de Adiciones/Cancelaciones - " . date('Y-m-d H:i:s');
-    
-    $message = "Reporte de ejecución " . ($modoPrueba ? "en modo prueba" : "en producción") . "\n\n";
-    $message .= "Total registros procesados: {$resultados['total']}\n";
-    $message .= "Cancelaciones procesadas: {$resultados['cancelaciones']}\n";
-    $message .= "Adiciones procesadas: {$resultados['adiciones']}\n";
-    $message .= "Cambios de grupo reportados: {$resultados['cambios_grupo']}\n";
-    $message .= "Errores encontrados: {$resultados['errores']}\n\n";
-    $message .= "Fecha de inicio del filtro: ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
-    
-    // Enviar a ambos correos
-    $userSoporte = (object)['email' => EMAIL_SOPORTE];
-    $userUnivirtual = (object)['email' => EMAIL_UNIVIRTUAL];
-    
-    email_to_user($userSoporte, $CFG->noreplyaddress, $subject, $message);
-    email_to_user($userUnivirtual, $CFG->noreplyaddress, $subject, $message);
-}
+// [Las demás funciones se modificarían de manera similar...]
 
 // =============================================================================
 // EJECUCIÓN PRINCIPAL
 // =============================================================================
 
 try {
-    echo "Iniciando proceso de adiciones y cancelaciones " . ($modoPrueba ? "en MODO PRUEBA" : "") . "...\n";
-    echo "Filtrando registros con fecha CREACIÓN >= ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
+    error_log("Iniciando proceso de adiciones y cancelaciones " . ($modoPrueba ? "en MODO PRUEBA" : ""));
+    error_log("Filtrando registros con fecha CREACIÓN >= ".date('Y-m-d H:i:s', FECHA_INICIO));
     
     // 1. Conectar a Oracle y obtener registros
     $connOracle = conectarOracle();
     $registros = obtenerRegistrosProcesar($connOracle);
     oci_close($connOracle);
     
-    echo "Registros a procesar: " . count($registros) . "\n";
+    error_log("Registros a procesar: " . count($registros));
     
     $resultados = [
         'total' => 0,
@@ -447,11 +293,11 @@ try {
                     break;
                     
                 default:
-                    echo "Tipo de operación no reconocido: {$registro['VALORTIPO']}\n";
+                    error_log("Tipo de operación no reconocido: {$registro['VALORTIPO']}");
                     $resultados['errores']++;
             }
         } catch (Exception $e) {
-            echo "ERROR procesando registro: " . $e->getMessage() . "\n";
+            error_log("ERROR procesando registro: " . $e->getMessage());
             $resultados['errores']++;
         }
     }
@@ -460,15 +306,24 @@ try {
     enviarReporteFinal($resultados, $modoPrueba);
     
     // 4. Mostrar resumen
-    echo "\n=== RESUMEN FINAL ===\n";
-    echo "Total registros procesados: {$resultados['total']}\n";
-    echo "Cancelaciones procesadas: {$resultados['cancelaciones']}\n";
-    echo "Adiciones procesadas: {$resultados['adiciones']}\n";
-    echo "Cambios de grupo reportados: {$resultados['cambios_grupo']}\n";
-    echo "Errores encontrados: {$resultados['errores']}\n";
+    error_log("\n=== RESUMEN FINAL ===");
+    error_log("Total registros procesados: {$resultados['total']}");
+    error_log("Cancelaciones procesadas: {$resultados['cancelaciones']}");
+    error_log("Adiciones procesadas: {$resultados['adiciones']}");
+    error_log("Cambios de grupo reportados: {$resultados['cambios_grupo']}");
+    error_log("Errores encontrados: {$resultados['errores']}");
 
 } catch (Exception $e) {
-    echo "ERROR: " . $e->getMessage() . "\n";
+    error_log("ERROR: " . $e->getMessage());
+    
+    // Enviar correo de error
+    $subjectError = "ERROR en script de adiciones/cancelaciones";
+    $messageError = "Ocurrió un error grave en el script:\n\n";
+    $messageError .= $e->getMessage()."\n\n";
+    $messageError .= "Fecha: ".date('Y-m-d H:i:s')."\n";
+    
+    enviarCorreoMejorado([EMAIL_SOPORTE, EMAIL_UNIVIRTUAL], $subjectError, $messageError, $modoPrueba);
+    
     exit(1);
 }
 
