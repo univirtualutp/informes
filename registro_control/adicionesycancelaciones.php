@@ -2,11 +2,9 @@
 /**
  * SCRIPT PARA MANEJO DE ADICIONES Y CANCELACIONES EN MOODLE
  * 
- * Versión completa corregida:
- * 1. Incluye nombre de asignatura en CSV
- * 2. Ejecución horaria compatible
- * 3. Control por fecha/hora exacta
- * 4. Se consulta la Vista de registro y se compara con Moodle para evaluar cada estudiante.
+ * Versión mejorada que:
+ * 1. Incluye todos los datos requeridos en el CSV (nombre, email, asignatura)
+ * 2. Prepara para ejecución cada 2 horas
  */
 
 // =============================================================================
@@ -240,7 +238,7 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     }
     
     if ($modoPrueba) {
-        $resumen[] = "[SIMULACIÓN] Cancelación - Username: $username, Estudiante: {$user->firstname} {$user->lastname}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle";
+        $resumen[] = "[SIMULACIÓN] Cancelación - Username: $username, Nombre: {$user->firstname} {$user->lastname}, Email: {$user->email}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle";
         return true;
     }
     
@@ -261,7 +259,7 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     $DB->insert_record('role_assignments', $role_assign);
     
     registrarProcesado($idgrupo, $username, TIPO_CANCELACION, $fechaOracle);
-    $resumen[] = "Cancelación procesada - Username: $username, Estudiante: {$user->firstname} {$user->lastname}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
+    $resumen[] = "Cancelación procesada - Username: $username, Nombre: {$user->firstname} {$user->lastname}, Email: {$user->email}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
     
     enviarCorreoCancelacionEstudiante($user, $curso);
     enviarCorreoCancelacionDocente($user, $curso);
@@ -295,7 +293,7 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     }
     
     if ($modoPrueba) {
-        $resumen[] = "[SIMULACIÓN] Adición - Username: $username, Estudiante: {$user->firstname} {$user->lastname}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle";
+        $resumen[] = "[SIMULACIÓN] Adición - Username: $username, Nombre: {$user->firstname} {$user->lastname}, Email: {$user->email}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle";
         return true;
     }
     
@@ -325,7 +323,7 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     ]);
     
     registrarProcesado($idgrupo, $username, TIPO_ADICION, $fechaOracle);
-    $resumen[] = "Adición procesada - Username: $username, Estudiante: {$user->firstname} {$user->lastname}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
+    $resumen[] = "Adición procesada - Username: $username, Nombre: {$user->firstname} {$user->lastname}, Email: {$user->email}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
     
     enviarCorreoAdicionEstudiante($user, $curso);
     return true;
@@ -343,12 +341,12 @@ function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
     }
     
     if ($modoPrueba) {
-        $resumen[] = "[SIMULACIÓN] Cambio de grupo - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: $idgrupo, Asignatura: $asignatura, Fecha Oracle: $fechaOracle";
+        $resumen[] = "[SIMULACIÓN] Cambio de grupo - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, Email: , ID Grupo: $idgrupo, Asignatura: $asignatura, Fecha Oracle: $fechaOracle";
         return true;
     }
     
     registrarProcesado($idgrupo, $username, TIPO_CAMBIO_GRUPO, $fechaOracle);
-    $resumen[] = "Cambio de grupo reportado - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: $idgrupo, Asignatura: $asignatura, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
+    $resumen[] = "Cambio de grupo reportado - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, Email: , ID Grupo: $idgrupo, Asignatura: $asignatura, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
     
     enviarCorreoCambioGrupo($registro);
     return true;
@@ -385,30 +383,30 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     // Procesar cada línea del resumen
     foreach ($resumen as $linea) {
         // Procesar Cancelaciones/Adiciones
-        if (preg_match('/(Cancelación|Adición) procesada - Username: (.*?), Estudiante: (.*?), Curso: (.*?), Asignatura: (.*?), IDGRUPO: (.*?), Fecha Oracle: (.*?), Fecha Proceso: (.*)/', $linea, $matches)) {
+        if (preg_match('/(Cancelación|Adición) procesada - Username: (.*?), Nombre: (.*?), Email: (.*?), Curso: (.*?), Asignatura: (.*?), IDGRUPO: (.*?), Fecha Oracle: (.*?), Fecha Proceso: (.*)/', $linea, $matches)) {
             fputcsv($csvFile, [
                 $matches[1],
                 $matches[2],
                 $matches[3],
-                '', // Email se obtendrá después
-                $matches[6],
-                $matches[5], // Asignatura
+                $matches[4],
                 $matches[7],
+                $matches[6],
                 $matches[8],
+                $matches[9],
                 'Completado'
             ], ';');
         }
         // Procesar Cambios de Grupo
-        elseif (preg_match('/Cambio de grupo reportado - Username: (.*?), Documento: (.*?), Nombre: (.*?), ID Grupo: (.*?), Asignatura: (.*?), Fecha Oracle: (.*?), Fecha Proceso: (.*)/', $linea, $matches)) {
+        elseif (preg_match('/Cambio de grupo reportado - Username: (.*?), Documento: (.*?), Nombre: (.*?), Email: (.*?), ID Grupo: (.*?), Asignatura: (.*?), Fecha Oracle: (.*?), Fecha Proceso: (.*)/', $linea, $matches)) {
             fputcsv($csvFile, [
                 'Cambio de grupo',
                 trim($matches[1]),
                 trim($matches[3]),
-                '',
                 trim($matches[4]),
                 trim($matches[5]),
                 trim($matches[6]),
                 trim($matches[7]),
+                trim($matches[8]),
                 'Reportado'
             ], ';');
         }
