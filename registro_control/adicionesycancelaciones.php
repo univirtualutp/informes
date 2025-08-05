@@ -2,9 +2,7 @@
 /**
  * SCRIPT PARA MANEJO DE ADICIONES Y CANCELACIONES EN MOODLE
  * 
- * Versión mejorada que:
- * 1. Incluye todos los datos requeridos en el CSV (nombre, email, asignatura)
- * 2. Prepara para ejecución cada 2 horas
+ * Versión completa y corregida con todas las funciones necesarias
  */
 
 // =============================================================================
@@ -125,7 +123,7 @@ function limpiarRegistrosAntiguos() {
 }
 
 // =============================================================================
-// FUNCIONES DE CORREO
+// FUNCIONES DE CORREO ELECTRÓNICO
 // =============================================================================
 
 function enviarCorreoCancelacionEstudiante($user, $curso) {
@@ -154,6 +152,17 @@ function enviarCorreoCancelacionDocente($user, $curso) {
     foreach ($profesores as $profesor) {
         enviarCorreo($profesor->email, $subject, $message);
     }
+}
+
+function enviarCorreoUsuarioNoExiste($username, $idgrupo) {
+    $subject = "[URGENTE] Usuario no existe en Moodle";
+    $message = "Se intentó matricular al usuario $username en el curso con IDGRUPO $idgrupo ".
+               "pero no existe en Moodle.\n\n".
+               "Por favor crear el usuario manualmente.\n\n".
+               "Fecha: ".date('Y-m-d H:i:s')."\n";
+    
+    enviarCorreo(EMAIL_SOPORTE, $subject, $message);
+    enviarCorreo(EMAIL_SOPORTE_ADICIONAL, $subject, $message);
 }
 
 function enviarCorreoAdicionEstudiante($user, $curso) {
