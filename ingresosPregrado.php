@@ -18,16 +18,16 @@ $correo_pruebas = 'daniel.pardo@utp.edu.co';
 // Modo prueba (cambiar a false para producción)
 $modo_prueba = false;
 
-// Calcular fechas (martes a lunes)
-$hoy = new DateTime();
+// Calcular fechas (martes a lunes) - ajustado para 04 de agosto de 2025
+$hoy = new DateTime('2025-08-04'); // Fecha específica solicitada
 $lunes = clone $hoy;
-$lunes->modify('last monday');
+$lunes->modify('next monday'); // Encuentra el próximo lunes
 $martes = clone $lunes;
-$martes->modify('-6 days');
+$martes->modify('-6 days'); // Retrocede 6 días para llegar al martes anterior
 $fecha_inicio = $martes->format('Y-m-d 00:00:00');
 $fecha_fin = $lunes->format('Y-m-d 23:59:59');
 
-$cursos = [494, 415, 507, 481, 508, 482, 509, 485, 526, 510, 511, 486, 490, 416, 503, 504, 527, 417, 496, 497, 418, 498, 419, 475, 421, 420, 422, 423, 512, 513, 515, 488, 489, 424, 516, 517, 491, 518, 492, 519, 493, 520, 425, 476, 426, 505, 506, 479, 521, 428, 430, 522, 495, 499, 431, 453, 500, 523, 434, 524, 435, 436, 437, 438, 440, 502, 439, 452, 525, 442];
+$cursos = ['786','583','804','596','820','790','821','819','789','580','799','616','617','797','798','842','844','621','805','584','581','802','619','627','800','801','618','588','815','589','590','594','595','787','788','605','607','793','573','791','606','792','608','609','795','611','794','610','586','814','623','622','624','733','574','604','796','576','612','577','614','830','615','783','579','784','785','591','587','810','625','582','803','620','592','816','817','593'];
 
 try {
     // Conexión a la base de datos PostgreSQL usando constantes definidas
@@ -85,6 +85,7 @@ try {
       u.email AS correo,
       c.fullname AS curso,
       mr.name as rol,
+      mr.id as rol_id, 
       ui.idprograma,
       ui.idfacultad,
       ci.idcodigo,
@@ -105,7 +106,7 @@ try {
           AND mlsl.target IN ('course', 'course_module')
           AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
       ) THEN 1 ELSE 0 END AS ingreso_dia,
-       -- Subconsulta para obtener el número de documento del docente
+      -- Subconsulta para obtener el número de documento del docente
       (SELECT CONCAT(u2.idnumber) AS Teacher
        FROM mdl_role_assignments AS ra
        JOIN mdl_context AS ctx ON ra.contextid = ctx.id
@@ -125,7 +126,7 @@ try {
       AND u.username NOT IN ('12345678')
       AND c.id IN ($cursos_in)
       AND mr.id IN ('9')
-    GROUP BY u.id, c.id, u.email, mr.name, ad.fecha, ui.idprograma, ui.idfacultad, ci.idcodigo, ci.grupo, ci.periodo, ci.nivel, ui.edad, ui.genero, ui.celular, ui.estrato
+    GROUP BY u.id, c.id, u.email, mr.id, mr.name, ad.fecha, ui.idprograma, ui.idfacultad, ci.idcodigo, ci.grupo, ci.periodo, ci.nivel, ui.edad, ui.genero, ui.celular, ui.estrato
     ORDER BY c.fullname, ad.fecha, u.lastname, u.firstname";
 
     // Preparar y ejecutar la consulta
@@ -216,16 +217,16 @@ try {
     if ($modo_prueba) {
         // En modo prueba solo se envía al correo de pruebas
         $mail->addAddress($correo_pruebas);
-        $mail->Subject = '[PRUEBA] Reporte de Ingresos  Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
+        $mail->Subject = '[PRUEBA] Reporte de Ingresos Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
     } else {
         // En modo producción se envía a los destinatarios reales
         foreach ($correo_destino as $correo) {
             $mail->addAddress($correo);
         }
-        $mail->Subject = 'Reporte de Ingresos  Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
+        $mail->Subject = 'Reporte de Ingresos Semanal de asignaturas de pregrado - ' . $fecha_para_nombre;
     }
     
-    $mail->Body = "Cordial Saludo,\n\nAdjunto el Reporte de Ingresos  Semanal de asignaturas de pregrado correspondiente al período del {$fecha_inicio} al {$fecha_fin}. El reporte contiene los archivos de estudiantes y profesores.\n\nSaludos,\nReporte Moodle";
+    $mail->Body = "Cordial Saludo,\n\nAdjunto el Reporte de Ingresos Semanal de asignaturas de pregrado correspondiente al período del {$fecha_inicio} al {$fecha_fin}. El reporte contiene los archivos de estudiantes y profesores.\n\nSaludos,\nReporte Moodle";
     $mail->isHTML(false); // Asegura que el correo sea texto plano
     
     if (file_exists($zip_file)) {
