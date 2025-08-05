@@ -6,6 +6,7 @@
  * 1. Incluye nombre de asignatura en CSV
  * 2. Ejecución horaria compatible
  * 3. Control por fecha/hora exacta
+ * 4. Se consulta la Vista de registro y se compara con Moodle para evaluar cada estudiante.
  */
 
 // =============================================================================
