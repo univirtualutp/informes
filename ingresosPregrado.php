@@ -16,7 +16,7 @@ $correo_notificacion = 'soporteunivirtual@utp.edu.co';
 $correo_pruebas = 'daniel.pardo@utp.edu.co';
 
 // Modo prueba (cambiar a false para producción)
-$modo_prueba = false;
+$modo_prueba = true;
 
 // Calcular fechas (martes a lunes) - ajustado para 04 de agosto de 2025
 $hoy = new DateTime('2025-08-04'); // Fecha específica solicitada
