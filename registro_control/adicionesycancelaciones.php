@@ -2,8 +2,10 @@
 /**
  * SCRIPT PARA MANEJO DE ADICIONES Y CANCELACIONES EN MOODLE
  * 
- * Versión completa y corregida con todas las funciones necesarias
- * Incluye control por fecha/hora y generación de reportes CSV
+ * Versión completa corregida:
+ * 1. Incluye nombre de asignatura en CSV
+ * 2. Ejecución horaria compatible
+ * 3. Control por fecha/hora exacta
  */
 
 // =============================================================================
@@ -11,7 +13,6 @@
 // =============================================================================
 
 define('CLI_SCRIPT', true);
-
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 set_time_limit(0);
@@ -27,26 +28,13 @@ if ($modoPrueba) {
 // CONFIGURACIÓN DE RUTAS
 // =============================================================================
 
-// Ruta al autoload.php
-$autoloadPath = '/root/scripts/informes/vendor/autoload.php';
-if (!file_exists($autoloadPath)) {
-    die("ERROR: No se encontró autoload.php en $autoloadPath\n");
-}
-require_once $autoloadPath;
-
-// Cargar configuración
+require_once '/root/scripts/informes/vendor/autoload.php';
 $config = require __DIR__.'/config/env.php';
-
-// Cargar Moodle
-$moodleConfigPath = $config['PATHS']['moodle_config'];
-if (!file_exists($moodleConfigPath)) {
-    die("ERROR: No se encontró config.php de Moodle en $moodleConfigPath\n");
-}
-require_once $moodleConfigPath;
+require_once $config['PATHS']['moodle_config'];
 global $DB, $CFG;
 
 // =============================================================================
-// CONSTANTES Y CONFIGURACIÓN
+// CONSTANTES
 // =============================================================================
 
 define('EMAIL_SOPORTE', 'soporteunivirtual@utp.edu.co');
@@ -68,99 +56,69 @@ define('ROL_DESMATRICULADO', 9);
 // FUNCIONES AUXILIARES
 // =============================================================================
 
-/**
- * Envía un correo usando la función mail de PHP
- */
 function enviarCorreo($to, $subject, $message) {
-    $headers = "From: " . FROM_EMAIL . "\r\n";
-    $headers .= "MIME-Version: 1.0\r\n";
-    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+    $headers = "From: ".FROM_EMAIL."\r\n".
+               "MIME-Version: 1.0\r\n".
+               "Content-Type: text/plain; charset=UTF-8\r\n";
     
-    if (mail($to, $subject, $message, $headers)) {
-        echo "[INFO] Correo enviado a $to\n";
-        return true;
-    } else {
-        echo "[ERROR] Falló el envío de correo a $to\n";
-        return false;
-    }
+    return mail($to, $subject, $message, $headers);
 }
 
-/**
- * Envía correo con archivo adjunto
- */
 function enviarCorreoConAdjunto($to, $subject, $message, $filePath, $fileName) {
     $boundary = uniqid('np');
+    $headers = "From: ".FROM_EMAIL."\r\n".
+               "MIME-Version: 1.0\r\n".
+               "Content-Type: multipart/mixed; boundary=$boundary\r\n";
     
-    $headers = "MIME-Version: 1.0\r\n";
-    $headers .= "From: " . FROM_EMAIL . "\r\n";
-    $headers .= "Content-Type: multipart/mixed; boundary=$boundary\r\n";
+    $body = "--$boundary\r\n".
+            "Content-Type: text/plain; charset=UTF-8\r\n".
+            "Content-Transfer-Encoding: 7bit\r\n\r\n".
+            $message."\r\n";
     
-    // Mensaje en texto plano
-    $body = "--$boundary\r\n";
-    $body .= "Content-Type: text/plain; charset=UTF-8\r\n";
-    $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
-    $body .= $message . "\r\n";
+    $fileContent = chunk_split(base64_encode(file_get_contents($filePath)));
+    $body .= "--$boundary\r\n".
+             "Content-Type: application/octet-stream; name=\"$fileName\"\r\n".
+             "Content-Transfer-Encoding: base64\r\n".
+             "Content-Disposition: attachment; filename=\"$fileName\"\r\n\r\n".
+             $fileContent."\r\n--$boundary--";
     
-    // Adjuntar archivo
-    $fileContent = file_get_contents($filePath);
-    $fileContent = chunk_split(base64_encode($fileContent));
-    
-    $body .= "--$boundary\r\n";
-    $body .= "Content-Type: application/octet-stream; name=\"$fileName\"\r\n";
-    $body .= "Content-Transfer-Encoding: base64\r\n";
-    $body .= "Content-Disposition: attachment; filename=\"$fileName\"\r\n\r\n";
-    $body .= $fileContent . "\r\n";
-    $body .= "--$boundary--";
-    
-    if (mail($to, $subject, $body, $headers)) {
-        echo "[INFO] Correo con adjunto enviado a $to\n";
-        return true;
-    } else {
-        echo "[ERROR] Falló el envío de correo con adjunto a $to\n";
-        return false;
-    }
+    return mail($to, $subject, $body, $headers);
 }
 
-/**
- * Registra los IDs de grupo + usuario ya procesados con fecha y hora exacta
- */
 function registrarProcesado($idgrupo, $usuario, $tipo, $fechaOracle) {
-    $fechaFormateada = date('Y-m-d H:i:s', strtotime($fechaOracle));
-    $linea = "$idgrupo|$usuario|$tipo|$fechaFormateada|".date('Y-m-d H:i:s')."\n";
+    $linea = sprintf("%s|%s|%s|%s|%s\n",
+        $idgrupo,
+        $usuario,
+        $tipo,
+        date('Y-m-d H:i:s', strtotime($fechaOracle)),
+        date('Y-m-d H:i:s')
+    );
     file_put_contents(REGISTRO_PROCESADOS_FILE, $linea, FILE_APPEND);
 }
 
-/**
- * Verifica si ya fue procesado considerando fecha y hora exacta de Oracle
- */
 function yaProcesado($idgrupo, $usuario, $tipo, $fechaOracle) {
     if (!file_exists(REGISTRO_PROCESADOS_FILE)) return false;
     
-    $fechaBusqueda = date('Y-m-d H:i:s', strtotime($fechaOracle));
-    $contenido = file_get_contents(REGISTRO_PROCESADOS_FILE);
+    $busqueda = sprintf("%s|%s|%s|%s|",
+        $idgrupo,
+        $usuario,
+        $tipo,
+        date('Y-m-d H:i:s', strtotime($fechaOracle))
+    );
     
-    // Buscar coincidencia exacta con fecha de Oracle
-    $busqueda = "$idgrupo|$usuario|$tipo|$fechaBusqueda|";
-    return strpos($contenido, $busqueda) !== false;
+    return strpos(file_get_contents(REGISTRO_PROCESADOS_FILE), $busqueda) !== false;
 }
 
-/**
- * Limpia registros antiguos (conserva solo los de los últimos 7 días)
- */
 function limpiarRegistrosAntiguos() {
     if (!file_exists(REGISTRO_PROCESADOS_FILE)) return;
     
-    $lineas = file(REGISTRO_PROCESADOS_FILE, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    $limite = strtotime('-7 days');
     $nuevoContenido = '';
-    $limiteTiempo = strtotime('-7 days');
     
-    foreach ($lineas as $linea) {
+    foreach (file(REGISTRO_PROCESADOS_FILE, FILE_IGNORE_NEW_LINES) as $linea) {
         $partes = explode('|', $linea);
-        if (count($partes) >= 5) {
-            $fechaRegistro = strtotime($partes[4]);
-            if ($fechaRegistro >= $limiteTiempo) {
-                $nuevoContenido .= $linea . "\n";
-            }
+        if (count($partes) >= 5 && strtotime($partes[4]) >= $limite) {
+            $nuevoContenido .= $linea."\n";
         }
     }
     
@@ -168,92 +126,56 @@ function limpiarRegistrosAntiguos() {
 }
 
 // =============================================================================
-// FUNCIONES DE CORREO ELECTRÓNICO
+// FUNCIONES DE CORREO
 // =============================================================================
 
-/**
- * Envía correo al estudiante cuando se cancela su matrícula
- */
 function enviarCorreoCancelacionEstudiante($user, $curso) {
     $subject = "Cancelación de asignatura - {$curso->fullname}";
-    $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
-    $message .= "Te informamos que tu matrícula en la asignatura {$curso->fullname} ha sido cancelada.\n\n";
-    $message .= "Si tienes dudas o es un error, comunícate a través de WhatsApp: <a href=\"https://api.whatsapp.com/send/?phone=3203921622&text&type=phone_number&app_absent=0\" target=\"_blank\">3203921622</a>\n\n";
-    $message .= "Atentamente,\n";
-    $message .= "Univirtual UTP";
+    $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n".
+               "Te informamos que tu matrícula en {$curso->fullname} ha sido cancelada.\n\n".
+               "Si es un error, contacta a soporte.\n\n".
+               "Atentamente,\nUnivirtual UTP";
     
     enviarCorreo($user->email, $subject, $message);
 }
 
-/**
- * Envía correo al docente cuando se cancela una matrícula
- */
 function enviarCorreoCancelacionDocente($user, $curso) {
     global $DB;
     
-    // Obtener todos los profesores del curso
     $profesores = $DB->get_records_sql("
-        SELECT u.* 
-        FROM {user} u
+        SELECT u.* FROM {user} u
         JOIN {role_assignments} ra ON ra.userid = u.id
-        JOIN {context} ctx ON ctx.id = ra.contextid AND ctx.contextlevel = 50
-        JOIN {course} c ON c.id = ctx.instanceid
-        WHERE c.id = ? AND ra.roleid = 3", [$curso->id]);
+        JOIN {context} ctx ON ctx.id = ra.contextid
+        WHERE ctx.instanceid = ? AND ra.roleid = 3", [$curso->id]);
     
     $subject = "Estudiante cancelado - {$curso->fullname}";
-    $message = "Estimado/a docente,\n\n";
-    $message .= "El estudiante {$user->firstname} {$user->lastname} ({$user->email}) ";
-    $message .= "ha cancelado la asignatura {$curso->fullname}.\n\n";
-    $message .= "Atentamente,\n";
-    $message .= "Univirtual UTP";
+    $message = "El estudiante {$user->firstname} {$user->lastname} ha sido cancelado.\n\n".
+               "Atentamente,\nUnivirtual UTP";
     
     foreach ($profesores as $profesor) {
         enviarCorreo($profesor->email, $subject, $message);
     }
 }
 
-/**
- * Envía correo cuando un usuario no existe en Moodle
- */
-function enviarCorreoUsuarioNoExiste($username, $idgrupo) {
-    $subject = "[URGENTE] Usuario no existe en Moodle";
-    $message = "Se intentó matricular al usuario $username en el curso con IDGRUPO $idgrupo ";
-    $message .= "pero no existe en Moodle.\n\n";
-    $message .= "Por favor crear el usuario manualmente.\n\n";
-    $message .= "Fecha: ".date('Y-m-d H:i:s')."\n";
-    
-    enviarCorreo(EMAIL_SOPORTE, $subject, $message);
-    enviarCorreo(EMAIL_SOPORTE_ADICIONAL, $subject, $message);
-}
-
-/**
- * Envía correo al estudiante cuando se añade su matrícula
- */
 function enviarCorreoAdicionEstudiante($user, $curso) {
-    $subject = "Matrícula en asignatura - {$curso->fullname}";
-    $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n";
-    $message .= "Ha sido matriculado/a en la asignatura {$curso->fullname}.\n\n";
-    $message .= "Para acceder al curso, ingrese al campus virtual con su número de documento ";
-    $message .= "y su contraseña.\n\n";
-    $message .= "Atentamente,\n";
-    $message .= "Univirtual UTP";
+    $subject = "Matrícula en {$curso->fullname}";
+    $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n".
+               "Has sido matriculado/a en {$curso->fullname}.\n\n".
+               "Accede al campus virtual con tu documento.\n\n".
+               "Atentamente,\nUnivirtual UTP";
     
     enviarCorreo($user->email, $subject, $message);
 }
 
-/**
- * Envía correo sobre cambio de grupo a soporte
- */
 function enviarCorreoCambioGrupo($registro) {
     $subject = "Cambio de grupo requerido - {$registro['NUMERODOCUMENTO']}";
-    $message = "Se requiere cambio de grupo para el estudiante:\n\n";
-    $message .= "Username: {$registro['NUMERODOCUMENTO']}\n";
-    $message .= "Documento: {$registro['NUMERODOCUMENTO']}\n";
-    $message .= "Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}\n";
-    $message .= "ID Grupo actual: {$registro['IDGRUPO']}\n";
-    $message .= "Asignatura: {$registro['NOMBREASIGNATURA']}\n";
-    $message .= "Fecha registro: {$registro['FECHACREACION']}\n\n";
-    $message .= "Este cambio debe realizarse manualmente en Moodle.";
+    $message = "Se requiere cambio de grupo para:\n\n".
+               "Estudiante: {$registro['NOMBRES']} {$registro['APELLIDOS']}\n".
+               "Documento: {$registro['NUMERODOCUMENTO']}\n".
+               "Grupo: {$registro['IDGRUPO']}\n".
+               "Asignatura: {$registro['NOMBREASIGNATURA']}\n".
+               "Fecha: {$registro['FECHACREACION']}\n\n".
+               "Acción requerida: Cambio manual en Moodle";
     
     enviarCorreo(EMAIL_SOPORTE, $subject, $message);
     enviarCorreo(EMAIL_SOPORTE_ADICIONAL, $subject, $message);
@@ -263,39 +185,22 @@ function enviarCorreoCambioGrupo($registro) {
 // FUNCIONES PRINCIPALES
 // =============================================================================
 
-/**
- * Conecta a la base de datos Oracle
- */
 function conectarOracle() {
     $config = $GLOBALS['config']['ORACLE_DB'];
     $tns = "(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(Host={$config['host']})(Port={$config['port']}))".
            "(CONNECT_DATA=(SID={$config['service_name']})))";
     
-    $conn = oci_connect(
-        $config['username'], 
-        $config['password'], 
-        $tns, 
-        'AL32UTF8'
-    );
-    
-    if (!$conn) {
-        $e = oci_error();
-        throw new Exception("Error Oracle: " . $e['message']);
-    }
-    
+    $conn = oci_connect($config['username'], $config['password'], $tns, 'AL32UTF8');
+    if (!$conn) throw new Exception("Error Oracle: ".oci_error()['message']);
     return $conn;
 }
 
-/**
- * Obtiene registros a procesar desde Oracle (fecha >= FECHA_INICIO)
- */
 function obtenerRegistrosProcesar($conn) {
-    $sql = "SELECT * 
-            FROM REGISTRO.VI_RYC_NOUNIVIRTUALASIGNCANCEL u
-            WHERE (regexp_like(u.PERIODOACADEMICO,'^'||'20252'||'(.)*[Pp][Rr][Ee][Gg][Rr][Aa][Dd][Oo].*'))
-            AND u.IDPERIODOACADEMICO <> '21896'
-            AND u.FECHACREACION >= TO_DATE('".date('Y-m-d H:i:s', FECHA_INICIO)."', 'YYYY-MM-DD HH24:MI:SS')
-            ORDER by u.FECHACREACION DESC";
+    $sql = "SELECT * FROM REGISTRO.VI_RYC_NOUNIVIRTUALASIGNCANCEL 
+            WHERE regexp_like(PERIODOACADEMICO,'^20252(.)*[Pp][Rr][Ee][Gg][Rr][Aa][Dd][Oo].*')
+            AND IDPERIODOACADEMICO <> '21896'
+            AND FECHACREACION >= TO_DATE('".date('Y-m-d H:i:s', FECHA_INICIO)."', 'YYYY-MM-DD HH24:MI:SS')
+            ORDER BY FECHACREACION DESC";
     
     $stid = oci_parse($conn, $sql);
     oci_execute($stid);
@@ -309,9 +214,6 @@ function obtenerRegistrosProcesar($conn) {
     return $registros;
 }
 
-/**
- * Procesa cancelación de asignatura
- */
 function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     global $DB;
     
@@ -319,70 +221,53 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     $username = $registro['NUMERODOCUMENTO'];
     $fechaOracle = $registro['FECHACREACION'];
     
-    // Verificar si ya fue procesado con la misma fecha de Oracle
     if (yaProcesado($idgrupo, $username, TIPO_CANCELACION, $fechaOracle)) {
-        echo "[INFO] Cancelación ya procesada anteriormente para $username en grupo $idgrupo con fecha $fechaOracle\n";
+        echo "[INFO] Cancelación ya procesada para $username en $idgrupo\n";
         return false;
     }
     
-    // Buscar curso en Moodle
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
     if (!$curso) {
-        echo "[CANCELACIÓN] Curso no encontrado para IDGRUPO: $idgrupo\n";
-        $resumen[] = "[ERROR] Cancelación fallida - Curso no encontrado para IDGRUPO: $idgrupo, Username: $username";
+        $resumen[] = "[ERROR] Curso no encontrado - IDGRUPO: $idgrupo, Username: $username";
         return false;
     }
     
-    // Buscar usuario en Moodle
     $user = $DB->get_record('user', ['username' => $username], 'id,email,firstname,lastname');
     if (!$user) {
-        echo "[CANCELACIÓN] Usuario no encontrado: $username\n";
-        $resumen[] = "[ERROR] Cancelación fallida - Usuario no encontrado: $username";
+        $resumen[] = "[ERROR] Usuario no encontrado - Username: $username";
         return false;
     }
     
     if ($modoPrueba) {
-        echo "[SIMULACIÓN] Se cambiaría rol de $username a DESMATRICULADO en curso {$curso->fullname}\n";
-        $resumen[] = "[SIMULACIÓN] Cancelación - Username: $username, Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha Oracle: $fechaOracle";
+        $resumen[] = "[SIMULACIÓN] Cancelación - Username: $username, Estudiante: {$user->firstname} {$user->lastname}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle";
         return true;
     }
     
-    // Cambiar rol de estudiante a desmatriculado
     $context = context_course::instance($curso->id);
-    
-    // Eliminar asignación de rol de estudiante
     $DB->delete_records('role_assignments', [
         'userid' => $user->id,
         'contextid' => $context->id,
         'roleid' => ROL_ESTUDIANTE
     ]);
     
-    // Asignar rol de desmatriculado
-    $role_assign = new stdClass();
-    $role_assign->roleid = ROL_DESMATRICULADO;
-    $role_assign->contextid = $context->id;
-    $role_assign->userid = $user->id;
-    $role_assign->timemodified = time();
-    $role_assign->modifierid = 2; // Usuario admin
-    
+    $role_assign = (object)[
+        'roleid' => ROL_DESMATRICULADO,
+        'contextid' => $context->id,
+        'userid' => $user->id,
+        'timemodified' => time(),
+        'modifierid' => 2
+    ];
     $DB->insert_record('role_assignments', $role_assign);
     
-    // Registrar como procesado con fecha exacta de Oracle
     registrarProcesado($idgrupo, $username, TIPO_CANCELACION, $fechaOracle);
+    $resumen[] = "Cancelación procesada - Username: $username, Estudiante: {$user->firstname} {$user->lastname}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
     
-    // Agregar al resumen
-    $resumen[] = "Cancelación procesada - Username: $username, Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha Oracle: $fechaOracle, Fecha Proceso: " . date('Y-m-d H:i:s');
-    
-    // Enviar correos de notificación
     enviarCorreoCancelacionEstudiante($user, $curso);
     enviarCorreoCancelacionDocente($user, $curso);
     
     return true;
 }
 
-/**
- * Procesa adición de asignatura
- */
 function procesarAdicion($registro, $modoPrueba, &$resumen) {
     global $DB;
     
@@ -390,132 +275,100 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     $username = $registro['NUMERODOCUMENTO'];
     $fechaOracle = $registro['FECHACREACION'];
     
-    // Verificar si ya fue procesado con la misma fecha de Oracle
     if (yaProcesado($idgrupo, $username, TIPO_ADICION, $fechaOracle)) {
-        echo "[INFO] Adición ya procesada anteriormente para $username en grupo $idgrupo con fecha $fechaOracle\n";
+        echo "[INFO] Adición ya procesada para $username en $idgrupo\n";
         return false;
     }
     
-    // Buscar curso en Moodle
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname,shortname');
     if (!$curso) {
-        echo "[ADICIÓN] Curso no encontrado para IDGRUPO: $idgrupo\n";
-        $resumen[] = "[ERROR] Adición fallida - Curso no encontrado para IDGRUPO: $idgrupo, Username: $username";
+        $resumen[] = "[ERROR] Curso no encontrado - IDGRUPO: $idgrupo, Username: $username";
         return false;
     }
     
-    // Buscar usuario en Moodle
     $user = $DB->get_record('user', ['username' => $username], 'id,email,firstname,lastname');
     if (!$user) {
-        echo "[ADICIÓN] Usuario no encontrado: $username - Informando a soporte\n";
-        $resumen[] = "[ERROR] Adición fallida - Usuario no encontrado: $username, IDGRUPO: $idgrupo";
+        $resumen[] = "[ERROR] Usuario no encontrado - Username: $username, IDGRUPO: $idgrupo";
         enviarCorreoUsuarioNoExiste($username, $idgrupo);
         return false;
     }
     
     if ($modoPrueba) {
-        echo "[SIMULACIÓN] Se matricularía a $username en curso {$curso->fullname}\n";
-        $resumen[] = "[SIMULACIÓN] Adición - Username: $username, Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha Oracle: $fechaOracle";
+        $resumen[] = "[SIMULACIÓN] Adición - Username: $username, Estudiante: {$user->firstname} {$user->lastname}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle";
         return true;
     }
     
-    // Matricular usuario con rol de estudiante
     $enrol = $DB->get_record('enrol', ['courseid' => $curso->id, 'enrol' => 'manual'], '*', MUST_EXIST);
     
-    // Verificar si ya está matriculado
     if ($DB->record_exists('user_enrolments', ['userid' => $user->id, 'enrolid' => $enrol->id])) {
-        echo "[ADICIÓN] Usuario $username ya está matriculado en el curso\n";
-        $resumen[] = "[INFO] Adición omitida - Usuario $username ya está matriculado en el curso {$curso->fullname} (IDGRUPO: $idgrupo)";
+        $resumen[] = "[INFO] Usuario ya matriculado - Username: $username, Curso: {$curso->fullname}";
         return false;
     }
     
-    // Asignar rol de estudiante
     $context = context_course::instance($curso->id);
-    $role_assign = [
+    $DB->insert_record('role_assignments', (object)[
         'roleid' => ROL_ESTUDIANTE,
         'contextid' => $context->id,
         'userid' => $user->id,
         'timemodified' => time(),
         'modifierid' => 2
-    ];
-    $DB->insert_record('role_assignments', (object)$role_assign);
+    ]);
     
-    // Crear matrícula
-    $user_enrolment = [
+    $DB->insert_record('user_enrolments', (object)[
         'status' => 0,
         'enrolid' => $enrol->id,
         'userid' => $user->id,
         'timestart' => time(),
         'timecreated' => time(),
         'timemodified' => time()
-    ];
-    $DB->insert_record('user_enrolments', (object)$user_enrolment);
+    ]);
     
-    // Registrar como procesado con fecha exacta de Oracle
     registrarProcesado($idgrupo, $username, TIPO_ADICION, $fechaOracle);
+    $resumen[] = "Adición procesada - Username: $username, Estudiante: {$user->firstname} {$user->lastname}, Curso: {$curso->fullname}, Asignatura: {$curso->fullname}, IDGRUPO: $idgrupo, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
     
-    // Agregar al resumen
-    $resumen[] = "Adición procesada - Username: $username, Estudiante: {$user->firstname} {$user->lastname} ({$user->email}), Curso: {$curso->fullname} (IDGRUPO: $idgrupo), Fecha Oracle: $fechaOracle, Fecha Proceso: " . date('Y-m-d H:i:s');
-    
-    // Enviar correo al estudiante
     enviarCorreoAdicionEstudiante($user, $curso);
-    
     return true;
 }
 
-/**
- * Procesa cambio de grupo
- */
 function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
     $idgrupo = $registro['IDGRUPO'];
     $username = $registro['NUMERODOCUMENTO'];
     $fechaOracle = $registro['FECHACREACION'];
+    $asignatura = $registro['NOMBREASIGNATURA'];
     
-    // Verificar si ya fue procesado con la misma fecha de Oracle
     if (yaProcesado($idgrupo, $username, TIPO_CAMBIO_GRUPO, $fechaOracle)) {
-        echo "[INFO] Cambio de grupo ya procesado anteriormente para $username en grupo $idgrupo con fecha $fechaOracle\n";
+        echo "[INFO] Cambio de grupo ya procesado para $username\n";
         return false;
     }
     
     if ($modoPrueba) {
-        echo "[SIMULACIÓN] Se reportaría cambio de grupo para {$registro['NUMERODOCUMENTO']}\n";
-        $resumen[] = "[SIMULACIÓN] Cambio de grupo - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}, Fecha Oracle: $fechaOracle";
-    } else {
-        // Registrar como procesado con fecha exacta de Oracle
-        registrarProcesado($idgrupo, $username, TIPO_CAMBIO_GRUPO, $fechaOracle);
-        
-        $resumen[] = "Cambio de grupo reportado - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: {$registro['IDGRUPO']}, Asignatura: {$registro['NOMBREASIGNATURA']}, Fecha Oracle: $fechaOracle, Fecha Proceso: " . date('Y-m-d H:i:s');
+        $resumen[] = "[SIMULACIÓN] Cambio de grupo - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: $idgrupo, Asignatura: $asignatura, Fecha Oracle: $fechaOracle";
+        return true;
     }
     
-    if (!$modoPrueba) {
-        enviarCorreoCambioGrupo($registro);
-    }
+    registrarProcesado($idgrupo, $username, TIPO_CAMBIO_GRUPO, $fechaOracle);
+    $resumen[] = "Cambio de grupo reportado - Username: $username, Documento: {$registro['NUMERODOCUMENTO']}, Nombre: {$registro['NOMBRES']} {$registro['APELLIDOS']}, ID Grupo: $idgrupo, Asignatura: $asignatura, Fecha Oracle: $fechaOracle, Fecha Proceso: ".date('Y-m-d H:i:s');
+    
+    enviarCorreoCambioGrupo($registro);
     return true;
 }
 
-/**
- * Envía reporte final de ejecución con CSV adjunto
- */
 function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
-    $subject = ($modoPrueba ? "[PRUEBA] " : "") . "Reporte de Adiciones/Cancelaciones - " . date('Y-m-d H:i:s');
+    global $DB;
     
-    // Crear contenido del correo (texto plano)
-    $message = "Reporte de ejecución " . ($modoPrueba ? "en modo prueba" : "en producción") . "\n\n";
-    $message .= "Total registros procesados: {$resultados['total']}\n";
-    $message .= "Cancelaciones procesadas: {$resultados['cancelaciones']}\n";
-    $message .= "Adiciones procesadas: {$resultados['adiciones']}\n";
-    $message .= "Cambios de grupo reportados: {$resultados['cambios_grupo']}\n";
-    $message .= "Errores encontrados: {$resultados['errores']}\n\n";
-    $message .= "Fecha de inicio del filtro: " . date('Y-m-d H:i:s', FECHA_INICIO) . "\n\n";
-    $message .= "Detalles de las operaciones:\n";
-    $message .= "----------------------------------------\n";
-    $message .= implode("\n", $resumen) . "\n";
+    $subject = ($modoPrueba ? "[PRUEBA] " : "")."Reporte de Adiciones/Cancelaciones - ".date('Y-m-d H:i:s');
+    $message = "Reporte de ejecución ".($modoPrueba ? "en modo prueba" : "en producción")."\n\n".
+               "Total registros: {$resultados['total']}\n".
+               "Cancelaciones: {$resultados['cancelaciones']}\n".
+               "Adiciones: {$resultados['adiciones']}\n".
+               "Cambios de grupo: {$resultados['cambios_grupo']}\n".
+               "Errores: {$resultados['errores']}\n\n".
+               "Detalles:\n".implode("\n", $resumen);
     
-    // Crear archivo CSV temporal
-    $csvFileName = tempnam(sys_get_temp_dir(), 'reporte_') . '.csv';
+    $csvFileName = tempnam(sys_get_temp_dir(), 'reporte_').'.csv';
     $csvFile = fopen($csvFileName, 'w');
     
-    // Escribir encabezados CSV
+    // Encabezados CSV
     fputcsv($csvFile, [
         'Tipo Operación',
         'Username',
@@ -528,58 +381,57 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
         'Estado'
     ], ';');
     
-    // Procesar el resumen para extraer datos para CSV
+    // Procesar cada línea del resumen
     foreach ($resumen as $linea) {
-        // Procesar operaciones exitosas
-        if (preg_match('/(Cancelación|Adición|Cambio de grupo).*Username: (.*?),.*Estudiante: (.*?) (.*?) \((.*?)\).*IDGRUPO: (\d+).*Fecha Oracle: (.*?), Fecha Proceso: (.*)/', $linea, $matches)) {
+        // Procesar Cancelaciones/Adiciones
+        if (preg_match('/(Cancelación|Adición) procesada - Username: (.*?), Estudiante: (.*?), Curso: (.*?), Asignatura: (.*?), IDGRUPO: (.*?), Fecha Oracle: (.*?), Fecha Proceso: (.*)/', $linea, $matches)) {
             fputcsv($csvFile, [
-                $matches[1], // Tipo operación
-                $matches[2], // Username
-                $matches[3].' '.$matches[4], // Nombre completo
-                $matches[5], // Email
-                $matches[6], // ID Grupo
-                '', // Asignatura (se puede extraer si está disponible)
-                $matches[7], // Fecha Oracle
-                $matches[8], // Fecha Proceso
+                $matches[1],
+                $matches[2],
+                $matches[3],
+                '', // Email se obtendrá después
+                $matches[6],
+                $matches[5], // Asignatura
+                $matches[7],
+                $matches[8],
                 'Completado'
             ], ';');
         }
-        // Procesar errores
-        elseif (preg_match('/\[ERROR\].*Username: (.*?),/', $linea, $matches)) {
+        // Procesar Cambios de Grupo
+        elseif (preg_match('/Cambio de grupo reportado - Username: (.*?), Documento: (.*?), Nombre: (.*?), ID Grupo: (.*?), Asignatura: (.*?), Fecha Oracle: (.*?), Fecha Proceso: (.*)/', $linea, $matches)) {
+            fputcsv($csvFile, [
+                'Cambio de grupo',
+                trim($matches[1]),
+                trim($matches[3]),
+                '',
+                trim($matches[4]),
+                trim($matches[5]),
+                trim($matches[6]),
+                trim($matches[7]),
+                'Reportado'
+            ], ';');
+        }
+        // Procesar Errores
+        elseif (preg_match('/\[ERROR\] (.*?) - (.*)/', $linea, $matches)) {
             fputcsv($csvFile, [
                 'Error',
-                $matches[1],
+                '',
                 '',
                 '',
                 '',
                 '',
                 '',
                 date('Y-m-d H:i:s'),
-                'Fallido'
+                $matches[1].' - '.$matches[2]
             ], ';');
         }
     }
     
     fclose($csvFile);
     
-    // Enviar correo con adjunto
-    enviarCorreoConAdjunto(
-        EMAIL_SOPORTE, 
-        $subject, 
-        $message, 
-        $csvFileName,
-        'reporte_adiciones_cancelaciones_' . date('Y-m-d_His') . '.csv'
-    );
+    enviarCorreoConAdjunto(EMAIL_SOPORTE, $subject, $message, $csvFileName, 'reporte_'.date('Ymd_His').'.csv');
+    enviarCorreoConAdjunto(EMAIL_SOPORTE_ADICIONAL, $subject, $message, $csvFileName, 'reporte_'.date('Ymd_His').'.csv');
     
-    enviarCorreoConAdjunto(
-        EMAIL_SOPORTE_ADICIONAL, 
-        $subject, 
-        $message, 
-        $csvFileName,
-        'reporte_adiciones_cancelaciones_' . date('Y-m-d_His') . '.csv'
-    );
-    
-    // Eliminar archivo temporal
     unlink($csvFileName);
 }
 
@@ -588,18 +440,16 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
 // =============================================================================
 
 try {
-    // Limpiar registros antiguos (más de 7 días)
     limpiarRegistrosAntiguos();
     
-    echo "Iniciando proceso de adiciones y cancelaciones " . ($modoPrueba ? "en MODO PRUEBA" : "") . "...\n";
-    echo "Filtrando registros con fecha CREACIÓN >= ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
+    echo "Iniciando proceso...\n";
+    echo "Filtrando registros desde ".date('Y-m-d H:i:s', FECHA_INICIO)."\n";
     
-    // 1. Conectar a Oracle y obtener registros
     $connOracle = conectarOracle();
     $registros = obtenerRegistrosProcesar($connOracle);
     oci_close($connOracle);
     
-    echo "Registros a procesar: " . count($registros) . "\n";
+    echo "Registros a procesar: ".count($registros)."\n";
     
     $resultados = [
         'total' => 0,
@@ -611,7 +461,6 @@ try {
     
     $resumen = [];
     
-    // 2. Procesar cada registro
     foreach ($registros as $registro) {
         $resultados['total']++;
         
@@ -636,30 +485,26 @@ try {
                     break;
                     
                 default:
-                    echo "Tipo de operación no reconocido: {$registro['VALORTIPO']}\n";
-                    $resumen[] = "[ERROR] Tipo de operación no reconocido: {$registro['VALORTIPO']}, Username: {$registro['NUMERODOCUMENTO']}";
+                    $resumen[] = "[ERROR] Tipo no reconocido: {$registro['VALORTIPO']}, Username: {$registro['NUMERODOCUMENTO']}";
                     $resultados['errores']++;
             }
         } catch (Exception $e) {
-            echo "ERROR procesando registro: " . $e->getMessage() . "\n";
-            $resumen[] = "[ERROR] Procesamiento fallido - " . $e->getMessage() . ", Username: {$registro['NUMERODOCUMENTO']}";
+            $resumen[] = "[ERROR] Procesamiento fallido: ".$e->getMessage().", Username: {$registro['NUMERODOCUMENTO']}";
             $resultados['errores']++;
         }
     }
     
-    // 3. Generar y enviar reporte final
     enviarReporteFinal($resultados, $modoPrueba, $resumen);
     
-    // 4. Mostrar resumen
-    echo "\n=== RESUMEN FINAL ===\n";
-    echo "Total registros procesados: {$resultados['total']}\n";
-    echo "Cancelaciones procesadas: {$resultados['cancelaciones']}\n";
-    echo "Adiciones procesadas: {$resultados['adiciones']}\n";
-    echo "Cambios de grupo reportados: {$resultados['cambios_grupo']}\n";
-    echo "Errores encontrados: {$resultados['errores']}\n";
+    echo "\nRESUMEN FINAL:\n";
+    echo "Total: {$resultados['total']}\n";
+    echo "Cancelaciones: {$resultados['cancelaciones']}\n";
+    echo "Adiciones: {$resultados['adiciones']}\n";
+    echo "Cambios grupo: {$resultados['cambios_grupo']}\n";
+    echo "Errores: {$resultados['errores']}\n";
 
 } catch (Exception $e) {
-    echo "ERROR: " . $e->getMessage() . "\n";
+    echo "ERROR: ".$e->getMessage()."\n";
     exit(1);
 }
 
