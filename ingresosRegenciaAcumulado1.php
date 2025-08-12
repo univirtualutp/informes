@@ -16,7 +16,7 @@ $correo_notificacion = 'soporteunivirtual@utp.edu.co';
 $correo_pruebas = 'daniel.pardo@utp.edu.co';
 
 // Modo prueba (cambiar a false para producción)
-$modo_prueba = true;
+$modo_prueba = false;
 
 // Configuración de fechas
 $fecha_inicio = '2025-08-13 00:00:00'; // Fecha fija de inicio
