@@ -6,7 +6,7 @@
  * - Consulta estudiantes en Oracle
  * - Verifica existencia en Moodle
  * - Valida coincidencia de cursos por IDGRUPO
- * - Modo prueba realiza validaciones sin modificar datos
+ * - Modo prueba realiza validaciones sin modificar datos (--dry-run)
  * - Genera reportes en formato CSV bien codificado
  * - Envía correos con reportes adjuntos
  */
