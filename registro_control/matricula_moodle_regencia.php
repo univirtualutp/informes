@@ -96,6 +96,7 @@ function obtenerEstudiantesMatricular($conn) {
             FROM REGISTRO.VI_RYC_UNIVIRTUALESTUDMATRIC 
             WHERE regexp_like(PERIODOACADEMICO,'^'||'20252'||'(.)*[Pp][Rr][Ee][Gg][Rr][Aa][Dd][Oo].*')
             AND CODIGOPROGRAMA = 'TR'
+            AND SEMESTREDEUBICACION = '1'
             ORDER BY NOMBREASIGNATURA, NUMEROGRUPO, INITCAP(NOMBRES) ASC";
     
     $stid = oci_parse($conn, $sql);
