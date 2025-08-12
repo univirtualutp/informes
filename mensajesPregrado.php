@@ -19,7 +19,7 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 // =============================================
 
 // Correos de destino para el reporte
-$correo_destino = ['soporteunivirtual@utp.edu.co'];
+$correo_destino = ['soporteunivirtual@utp.edu.co', 'univirtual-utp@utp.edu.co'];
 // Correo para notificaciones de éxito o error
 $correo_notificacion = 'soporteunivirtual@utp.edu.co';
 // Correo remitente para el envío del reporte
@@ -120,7 +120,7 @@ try {
                 to_char(to_timestamp(m2.time), 'YYYY-MM-DD HH24:MI:SS')
             ) 
          FROM mdl_local_mail_messages m2
-         JOIN mdl_local_mail_message_users mu bolsinger ON m2.id = mu_sender.messageid
+         JOIN mdl_local_mail_message_users mu_sender ON m2.id = mu_sender.messageid -- Corregido 'mu bolsinger' a 'mu_sender'
          JOIN mdl_local_mail_message_users mu_recipient ON m2.id = mu_recipient.messageid
          JOIN mdl_user u2 ON mu_recipient.userid = u2.id
          WHERE mu_sender.userid = u.id 
@@ -150,7 +150,7 @@ try {
 
     // Verificar si se obtuvieron resultados
     if (count($resultados) === 0) {
-        throw new Exception("No se encontraron resultados para el período especificado ($fecha_inicio_simple a $fecha_fin_simple)");
+        throw new Exception("No se encontraron resultados para el período especificado ($fecha_inicio_simple a $fecha_inicio_simple)");
     }
 
     // =============================================
