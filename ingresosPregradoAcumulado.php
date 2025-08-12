@@ -325,8 +325,8 @@ try {
 
     // Generar archivos Excel con dos hojas
     $fecha_para_nombre = $lunes_pasado->format('Ymd');
-    $nombre_estudiantes = "estudiantes_pregrado_{$fecha_para_nombre}.xlsx";
-    $nombre_profesores = "profesores_pregrado_{$fecha_para_nombre}.xlsx";
+    $nombre_estudiantes = "estudiantes_pregrado_acumulado_{$fecha_para_nombre}.xlsx";
+    $nombre_profesores = "profesores_pregrado_acumulado_{$fecha_para_nombre}.xlsx";
 
     $temp_dir = sys_get_temp_dir();
     
@@ -379,19 +379,19 @@ try {
     
     if ($modo_prueba) {
         $mail->addAddress($correo_pruebas);
-        $mail->Subject = '[PRUEBA] Reporte de Ingresos Semanal (04 Ago - '.$fecha_fin_simple.')';
+        $mail->Subject = '[PRUEBA] Reporte de Ingresos Acumulado (04 Ago - '.$fecha_fin_simple.')';
     } else {
         foreach ($correo_destino as $correo) {
             $mail->addAddress($correo);
         }
-        $mail->Subject = 'Reporte de Ingresos Semanal (04 Ago - '.$fecha_fin_simple.')';
+        $mail->Subject = 'Reporte de Ingresos Acumulado (04 Ago - '.$fecha_fin_simple.')';
     }
     
     $mail->Body = "Reporte correspondiente al período del {$fecha_inicio_simple} al {$fecha_fin_simple}";
     $mail->isHTML(false);
     
     if (file_exists($zip_file)) {
-        $mail->addAttachment($zip_file, "reporte_asignaturas_04ago-".$fecha_fin_simple.".zip");
+        $mail->addAttachment($zip_file, "reporte_asignaturas_pregrado_acumulado".$fecha_fin_simple.".zip");
     }
     
     $mail->send();
@@ -403,8 +403,8 @@ try {
 
     // Notificación
     $mensaje_notificacion = $modo_prueba ? 
-        "[PRUEBA] Reporte generado correctamente (04 Ago - $fecha_fin_simple)" :
-        "Reporte enviado correctamente (04 Ago - $fecha_fin_simple)";
+        "[PRUEBA] Reporte generado correctamente acumulado (04 Ago - $fecha_fin_simple)" :
+        "Reporte enviado correctamente acumulado (04 Ago - $fecha_fin_simple)";
     
     mail($correo_notificacion, 'Estado Reporte', $mensaje_notificacion);
     

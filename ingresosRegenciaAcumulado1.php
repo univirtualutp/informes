@@ -19,8 +19,8 @@ $correo_pruebas = 'daniel.pardo@utp.edu.co';
 $modo_prueba = true;
 
 // Configuración de fechas
-$fecha_inicio = '2025-08-11 00:00:00'; // Fecha fija de inicio
-$fecha_inicio_simple = '2025-08-11';
+$fecha_inicio = '2025-08-13 00:00:00'; // Fecha fija de inicio
+$fecha_inicio_simple = '2025-08-13';
 
 // Calcular fecha final (último lunes a las 23:59:59)
 $hoy = new DateTime();
@@ -29,7 +29,7 @@ $lunes_pasado->modify('last monday');
 $fecha_fin = $lunes_pasado->format('Y-m-d 23:59:59');
 $fecha_fin_simple = $lunes_pasado->format('Y-m-d');
 
-$cursos = ['851','852','845','846','849','850','847','848'];
+$cursos = ['734','841','736','839','735','838','737','840'];
 
 // Función para reemplazar valores nulos o vacíos con 0
 function sanitizeData($data) {
@@ -325,8 +325,8 @@ try {
 
     // Generar archivos Excel con dos hojas
     $fecha_para_nombre = $lunes_pasado->format('Ymd');
-    $nombre_estudiantes = "estudiantes_pregrado_regencia_c1_s2_acumulado_{$fecha_para_nombre}.xlsx";
-    $nombre_profesores = "profesores_pregrado_regencia_c1_s2_acumulado_{$fecha_para_nombre}.xlsx";
+    $nombre_estudiantes = "estudiantes_pregrado_regencia_c2_s1_acumulado_{$fecha_para_nombre}.xlsx";
+    $nombre_profesores = "profesores_pregrado_regencia_c2_s1_acumulado_{$fecha_para_nombre}.xlsx";
 
     $temp_dir = sys_get_temp_dir();
     
@@ -379,19 +379,19 @@ try {
     
     if ($modo_prueba) {
         $mail->addAddress($correo_pruebas);
-        $mail->Subject = '[PRUEBA] Reporte de Ingresos Acumulado (11 Ago - '.$fecha_fin_simple.')';
+        $mail->Subject = '[PRUEBA] Reporte de Ingresos Acumulado (13 Ago - '.$fecha_fin_simple.')';
     } else {
         foreach ($correo_destino as $correo) {
             $mail->addAddress($correo);
         }
-        $mail->Subject = 'Reporte de Ingresos Acumulado (11 Ago - '.$fecha_fin_simple.')';
+        $mail->Subject = 'Reporte de Ingresos Acumulado (13 Ago - '.$fecha_fin_simple.')';
     }
     
     $mail->Body = "Reporte correspondiente al período del {$fecha_inicio_simple} al {$fecha_fin_simple}";
     $mail->isHTML(false);
     
     if (file_exists($zip_file)) {
-        $mail->addAttachment($zip_file, "reporte_regencia_c1_s2_acumulado".$fecha_fin_simple.".zip");
+        $mail->addAttachment($zip_file, "reporte_regencia_c2_s1_acumulado".$fecha_fin_simple.".zip");
     }
     
     $mail->send();
@@ -403,8 +403,8 @@ try {
 
     // Notificación
     $mensaje_notificacion = $modo_prueba ? 
-        "[PRUEBA] Reporte generado correctamente acumulado (11 Ago - $fecha_fin_simple)" :
-        "Reporte enviado correctamente acumulado (11 Ago - $fecha_fin_simple)";
+        "[PRUEBA] Reporte generado correctamente acumulado (13 Ago - $fecha_fin_simple)" :
+        "Reporte enviado correctamente acumulado (13 Ago - $fecha_fin_simple)";
     
     mail($correo_notificacion, 'Estado Reporte', $mensaje_notificacion);
     
