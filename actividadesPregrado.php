@@ -14,11 +14,11 @@ $dbname = 'moodle';
 $user = 'moodle';
 $pass = 'M00dl3';
 
-// Configuración de correos (manteniendo Postfix como estaba)
-$correo_destino = ['daniel.pardo@utp.edu.co'];
-$correo_notificacion = 'daniel.pardo@utp.edu.co';
+// Configuración de correos 
+$correo_destino = ['soporteunivirtual@utp.edu.co','pedagogiaunivirtual@utp.edu.co','univirtual-utp@utp.edu.co'];
+$correo_notificacion = 'soporteunivirtual@utp.edu.co';
 
-// Definición de cursos en variable (puedes modificarlos aquí)
+// Definición de cursos en variable 
 $cursos_seleccionados = [
     '786','583','804','596','820','790','821','819','789','580','799','616','617','797','798',
     '842','844','621','805','584','581','802','619','627','800','801','618','588','815','589',
@@ -342,7 +342,7 @@ try {
         throw new Exception("No se pudo crear el archivo ZIP");
     }
 
-    // Enviar correo con Postfix (como en el original)
+    // Enviar correo con Postfix 
     $mail = new PHPMailer();
     $mail->isSendmail(); // Usar sendmail/postfix
     
@@ -350,8 +350,8 @@ try {
     foreach ($correo_destino as $correo) {
         $mail->addAddress($correo);
     }
-    $mail->Subject = "Reporte de actividades pregrado - " . $hoy->format('Y-m-d');
-    $mail->Body = "Cordial Saludo,\n\nAdjunto el reporte de actividades pregrado en un archivo ZIP.";
+    $mail->Subject = "Reporte de actividades asignaturas de pregrado - " . $hoy->format('Y-m-d');
+    $mail->Body = "Cordial Saludo,\n\nAdjunto el reporte de actividades asignaturas de pregrado en un archivo ZIP.";
     $mail->addAttachment($zip_file, 'actividades_pregrado.zip');
     
     if (!$mail->send()) {
@@ -359,7 +359,7 @@ try {
     }
 
     // Notificar éxito
-    mail($correo_notificacion, "Estado Reporte", "El reporte de actividades pregrado fue enviado correctamente.");
+    mail($correo_notificacion, "Estado Reporte", "El reporte de actividades asignaturas de pregrado fue enviado correctamente.");
 
     // Limpiar archivos temporales
     foreach ($archivos_excel as $archivo) {
