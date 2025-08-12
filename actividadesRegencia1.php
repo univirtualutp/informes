@@ -27,7 +27,7 @@ $cursos_seleccionados = [
 $hoy = new DateTime();
 $lunes = clone $hoy;
 $lunes->modify('last monday');
-$fecha_inicio = new DateTime(date('Y') . '-08-11 00:00:00');
+$fecha_inicio = new DateTime(date('Y') . '-08-13 00:00:00');
 $fecha_fin = clone $lunes;
 $fecha_fin->setTime(23, 59, 59);
 

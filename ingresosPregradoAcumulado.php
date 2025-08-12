@@ -1,311 +1,427 @@
 <?php
 // Configuración inicial
 date_default_timezone_set('America/Bogota');
-
-// Autoload de Composer
-require __DIR__ . '/vendor/autoload.php';
-
-// Incluir archivo de configuración de la base de datos
+require 'vendor/autoload.php'; 
 require_once __DIR__ . '/db_moodle_config.php';
 
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 
-// =============================================
-// CONFIGURACIÓN
-// =============================================
-$correo_destino = ['soporteunivirtual@utp.edu.co','univirtual-utp@utp.edu.co'];
+// Configuración de correos
+$correo_destino = ['soporteunivirtual@utp.edu.co', 'univirtual-utp@utp.edu.co'];
 $correo_notificacion = 'soporteunivirtual@utp.edu.co';
-$remitente = 'noreply-univirtual@utp.edu.co';
+$correo_pruebas = 'daniel.pardo@utp.edu.co';
 
-$cursos = [494, 415, 507, 481, 508, 482, 509, 485, 526, 510, 511, 486, 490, 416, 503, 504, 527, 417, 496, 497, 418, 498, 419, 475, 421, 420, 422, 423, 512, 513, 515, 488, 489, 424, 516, 517, 491, 518, 492, 519, 493, 520, 425, 476, 426, 505, 506, 479, 521, 428, 430, 522, 495, 499, 431, 453, 500, 523, 434, 524, 435, 436, 437, 438, 440, 502, 439, 452, 525, 442];
-$cursos_str = implode("','", $cursos);
+// Modo prueba (cambiar a false para producción)
+$modo_prueba = true;
 
-// =============================================
-// CÁLCULO DE FECHAS (inicio fijo, fin dinámico)
-// =============================================
-$hoy = new DateTime('now', new DateTimeZone('America/Bogota'));
-
-// Fecha de inicio FIJA (2025-08-04 00:00:00)
-$fecha_inicio = '2025-08-04 00:00:00';
+// Configuración de fechas
+$fecha_inicio = '2025-08-04 00:00:00'; // Fecha fija de inicio
 $fecha_inicio_simple = '2025-08-04';
 
-// Fecha final DINÁMICA (último lunes a las 23:59:59)
+// Calcular fecha final (último lunes a las 23:59:59)
+$hoy = new DateTime();
 $lunes_pasado = clone $hoy;
 $lunes_pasado->modify('last monday');
 $fecha_fin = $lunes_pasado->format('Y-m-d 23:59:59');
 $fecha_fin_simple = $lunes_pasado->format('Y-m-d');
 
-// Crear objeto DateTime para la fecha de inicio para formatearla
-$fecha_inicio_obj = new DateTime($fecha_inicio, new DateTimeZone('America/Bogota'));
+$cursos = ['786','583','804','596','820','790','821','819','789','580','799','616','617','797','798','842','844','621','805','584','581','802','619','627','800','801','618','588','815','589','590','594','595','787','788','605','607','793','573','791','606','792','608','609','795','611','794','610','586','814','623','622','624','733','574','604','796','576','612','577','614','830','615','783','579','784','785','591','587','810','625','582','803','620','592','816','817','593','740','822','823','824','825','741','826','827','828'];
 
-// Fecha para el nombre del archivo (opcional, según necesidad)
-$fecha_para_nombre = $hoy->format('Y-m-d');
-
-// Nombres de archivos
-$temp_profesores = 'profesores_' . $fecha_para_nombre . '.xlsx';
-$temp_estudiantes = 'estudiantes_' . $fecha_para_nombre . '.xlsx';
-$temp_asesores = 'asesores_' . $fecha_para_nombre . '.xlsx';
-$temp_general = 'general_' . $fecha_para_nombre . '.xlsx';
-$zip_file = 'reporte_asignaturas_pregrado_' . $fecha_para_nombre . '.zip';
+// Función para reemplazar valores nulos o vacíos con 0
+function sanitizeData($data) {
+    foreach ($data as &$row) {
+        foreach ($row as &$value) {
+            if ($value === null || $value === '') {
+                $value = 0;
+            }
+        }
+    }
+    return $data;
+}
 
 try {
-    // Conexión a la base de datos usando constantes del archivo de configuración
-    $dsn = "pgsql:host=".DB_HOST.";port=".DB_PORT.";dbname=".DB_NAME;
-    $db = new PDO($dsn, DB_USER, DB_PASS);
-    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $db->exec("SET TIME ZONE 'America/Bogota'");
+    // Conexión a la base de datos
+    $pdo = new PDO(
+        "pgsql:host=".DB_HOST.";dbname=".DB_NAME.";port=".DB_PORT, 
+        DB_USER, 
+        DB_PASS
+    );
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // NUEVA CONSULTA SQL
-    $sql = "
-WITH AllDays AS (
-  SELECT generate_series(
-    timestamp '$fecha_inicio',
-    timestamp '$fecha_fin',
-    interval '1 day'
-  )::DATE AS fecha
-),
-UserInfo AS (
-  SELECT 
-    uid.userid,
-    MAX(CASE WHEN ufield.shortname = 'programa' THEN uid.data END) AS idprograma,
-    MAX(CASE WHEN ufield.shortname = 'facultad' THEN uid.data END) AS idfacultad,
-    MAX(CASE WHEN ufield.shortname = 'edad' THEN uid.data END) AS edad,
-    MAX(CASE WHEN ufield.shortname = 'genero' THEN uid.data END) AS genero,
-    MAX(CASE WHEN ufield.shortname = 'celular' THEN uid.data END) AS celular,
-    MAX(CASE WHEN ufield.shortname = 'estrato' THEN uid.data END) AS estrato
-  FROM mdl_user_info_data uid
-  JOIN mdl_user_info_field ufield ON ufield.id = uid.fieldid
-  WHERE ufield.shortname IN ('programa', 'facultad', 'edad', 'genero', 'celular', 'estrato')
-  GROUP BY uid.userid
-),
-CourseInfo AS (
-  SELECT 
-    cfidata.instanceid,
-    MAX(CASE WHEN cfield.shortname = 'codigo_curso' THEN cfidata.value END) AS idcodigo,
-    MAX(CASE WHEN cfield.shortname = 'grupo_curso' THEN cfidata.value END) AS grupo,
-    MAX(CASE WHEN cfield.shortname = 'periodo' THEN cfidata.value END) AS periodo,
-    MAX(CASE WHEN cfield.shortname = 'nivel_educativo' THEN cfidata.value END) AS nivel
-  FROM mdl_customfield_data cfidata
-  JOIN mdl_customfield_field cfield ON cfield.id = cfidata.fieldid
-  WHERE cfield.shortname IN ('codigo_curso', 'grupo_curso', 'periodo', 'nivel_educativo')
-  GROUP BY cfidata.instanceid
-),
-UserCourseAccess AS (
-  SELECT 
-    u.id AS userid,
-    c.id AS courseid,
-    COUNT(DISTINCT CAST(to_timestamp(mlsl.timecreated) AS DATE)) AS access_days
-  FROM mdl_user u
-  JOIN mdl_role_assignments mra ON mra.userid = u.id
-  JOIN mdl_role mr ON mra.roleid = mr.id
-  JOIN mdl_context mc ON mc.id = mra.contextid
-  JOIN mdl_course c ON c.id = mc.instanceid
-  LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
-    AND mlsl.userid = u.id
-    AND mlsl.action = 'viewed'
-    AND mlsl.target IN ('course', 'course_module')
-    AND CAST(to_timestamp(mlsl.timecreated) AS DATE) BETWEEN '$fecha_inicio_simple' AND '$fecha_fin_simple'
-  WHERE mc.contextlevel = 50
-    AND u.username NOT IN ('12345678')
-    AND c.id IN ('$cursos_str')
-    AND mr.id IN ('3','5','9','11','16','17')
-  GROUP BY u.id, c.id
-)
-SELECT 
-  u.username AS codigo,
-  mr.name AS rol,
-  u.firstname AS nombre,
-  u.lastname AS apellidos,
-  u.email AS correo,
-  c.fullname AS curso,
-  COALESCE(uca.access_days, 0) AS total_ingresos,
-  ui.idprograma,
-  ui.idfacultad,
-  ci.idcodigo,
-  ci.grupo,
-  ci.periodo,
-  ci.nivel,
-  ui.edad,
-  ui.genero,
-  ui.celular,
-  ui.estrato,
-  (SELECT CONCAT(u2.idnumber) AS Teacher
-   FROM mdl_role_assignments AS ra
-   JOIN mdl_context AS ctx ON ra.contextid = ctx.id
-   JOIN mdl_user AS u2 ON u2.id = ra.userid
-   WHERE ra.roleid = 3
-     AND ctx.instanceid = c.id
-   LIMIT 1) AS nrodoc
-FROM mdl_user u
-JOIN mdl_role_assignments mra ON mra.userid = u.id
-JOIN mdl_role mr ON mra.roleid = mr.id
-JOIN mdl_context mc ON mc.id = mra.contextid
-JOIN mdl_course c ON c.id = mc.instanceid
-LEFT JOIN UserInfo ui ON ui.userid = u.id
-LEFT JOIN CourseInfo ci ON ci.instanceid = c.id
-LEFT JOIN UserCourseAccess uca ON uca.userid = u.id AND uca.courseid = c.id
-WHERE mc.contextlevel = 50
-  AND u.username NOT IN ('12345678')
-  AND c.id IN ('$cursos_str')
-  AND mr.id IN ('3','5','9','11','16','17')
-GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.name, uca.access_days, 
-         ui.idprograma, ui.idfacultad, ci.idcodigo, ci.grupo, ci.periodo, ci.nivel, ui.edad, ui.genero, ui.celular, ui.estrato
-ORDER BY c.fullname, u.lastname, u.firstname";
-
-    // Ejecutar consulta
-    $stmt = $db->query($sql);
-    $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    if (count($resultados) === 0) {
-        throw new Exception("No se encontraron resultados para el período especificado ($fecha_inicio_simple a $fecha_fin_simple)");
+    // Crear parámetros nombrados para los cursos
+    $cursos_params = [];
+    foreach ($cursos as $i => $curso_id) {
+        $cursos_params[":curso_$i"] = $curso_id;
     }
+    $cursos_in = implode(',', array_keys($cursos_params));
 
-    // Separar resultados por rol (usando el nombre del rol ahora)
-    $profesores = array_filter($resultados, function($fila) {
-        return strpos($fila['rol'], 'Profesor') !== false;
-    });
-    
-    $estudiantes = array_filter($resultados, function($fila) {
-        return strpos($fila['rol'], 'Estudiante') !== false;
-    });
-    
-    $asesores = array_filter($resultados, function($fila) {
-        return strpos($fila['rol'], 'Asesor') !== false;
-    });
+    // CONSULTA 1 - Datos detallados (Hoja "Power BI")
+    $sql_detalle = "WITH AllDays AS (
+      SELECT generate_series(
+        :fecha_inicio::timestamp,
+        :fecha_fin::timestamp,
+        interval '1 day'
+      )::DATE AS fecha
+    ),
+    UserCourseDays AS (
+      SELECT 
+        u.id AS userid,
+        c.id AS courseid,
+        mr.id AS roleid,
+        COUNT(DISTINCT CASE WHEN mlsl.id IS NOT NULL THEN ad.fecha END) AS total_ingresos
+      FROM mdl_user u
+      CROSS JOIN AllDays ad
+      LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+      LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+      LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+      LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+      LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
+        AND mlsl.userid = u.id
+        AND mlsl.action = 'viewed'
+        AND mlsl.target IN ('course', 'course_module')
+        AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
+      WHERE mc.contextlevel = 50
+        AND u.username NOT IN ('12345678')
+        AND c.id IN ($cursos_in)
+        AND mr.id IN ('5','9')
+      GROUP BY u.id, c.id, mr.id
+    ),
+    UserCustomFields AS (
+      SELECT 
+        uid.userid,
+        MAX(CASE WHEN ufield.shortname = 'programa' THEN uid.data END) AS idprograma,
+        MAX(CASE WHEN ufield.shortname = 'facultad' THEN uid.data END) AS idfacultad,
+        MAX(CASE WHEN ufield.shortname = 'edad' THEN uid.data END) AS edad,
+        MAX(CASE WHEN ufield.shortname = 'genero' THEN uid.data END) AS genero,
+        MAX(CASE WHEN ufield.shortname = 'celular' THEN uid.data END) AS celular,
+        MAX(CASE WHEN ufield.shortname = 'estrato' THEN uid.data END) AS estrato
+      FROM mdl_user_info_data uid
+      JOIN mdl_user_info_field ufield ON ufield.id = uid.fieldid
+      WHERE ufield.shortname IN ('programa', 'facultad', 'edad', 'genero', 'celular', 'estrato')
+      GROUP BY uid.userid
+    ),
+    CourseInfo AS (
+      SELECT 
+        cfidata.instanceid,
+        MAX(CASE WHEN cfield.shortname = 'codigo_curso' THEN cfidata.value END) AS idcodigo,
+        MAX(CASE WHEN cfield.shortname = 'grupo_curso' THEN cfidata.value END) AS grupo,
+        MAX(CASE WHEN cfield.shortname = 'periodo' THEN cfidata.value END) AS periodo,
+        MAX(CASE WHEN cfield.shortname = 'nivel_educativo' THEN cfidata.value END) AS nivel
+      FROM mdl_customfield_data cfidata
+      JOIN mdl_customfield_field cfield ON cfield.id = cfidata.fieldid
+      WHERE cfield.shortname IN ('codigo_curso', 'grupo_curso', 'periodo', 'nivel_educativo')
+      GROUP BY cfidata.instanceid
+    )
+    SELECT 
+      u.username AS codigo,
+      u.firstname AS nombre,
+      u.lastname AS apellidos,
+      u.email AS correo,
+      c.fullname AS curso,
+      mr.name AS rol,
+      mr.id AS rol_id,
+      COALESCE(ucf.idprograma, '0') AS idprograma,
+      COALESCE(ucf.idfacultad, '0') AS idfacultad,
+      COALESCE(ci.idcodigo, '0') AS idcodigo,
+      COALESCE(ci.grupo, '0') AS grupo,
+      COALESCE(ci.periodo, '0') AS periodo,
+      COALESCE(ci.nivel, '0') AS nivel,
+      COALESCE(ucf.edad, '0') AS edad,
+      COALESCE(ucf.genero, '0') AS genero,
+      COALESCE(ucf.celular, '0') AS celular,
+      COALESCE(ucf.estrato, '0') AS estrato,
+      ad.fecha,
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM mdl_logstore_standard_log mlsl
+        WHERE mlsl.courseid = c.id
+          AND mlsl.userid = u.id
+          AND mlsl.action = 'viewed'
+          AND mlsl.target IN ('course', 'course_module')
+          AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
+      ) THEN 1 ELSE 0 END AS ingreso_dia,
+      COALESCE(ucd.total_ingresos, 0) AS total_ingresos,
+      COALESCE((SELECT CONCAT(u2.idnumber) 
+       FROM mdl_role_assignments AS ra
+       JOIN mdl_context AS ctx ON ra.contextid = ctx.id
+       JOIN mdl_user AS u2 ON u2.id = ra.userid
+       WHERE ra.roleid = 3
+         AND ctx.instanceid = c.id
+       LIMIT 1), '0') AS nrodoc
+    FROM mdl_user u
+    CROSS JOIN AllDays ad
+    LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+    LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+    LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+    LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+    LEFT JOIN UserCustomFields ucf ON ucf.userid = u.id
+    LEFT JOIN CourseInfo ci ON ci.instanceid = c.id
+    LEFT JOIN UserCourseDays ucd ON ucd.userid = u.id AND ucd.courseid = c.id AND ucd.roleid = mr.id
+    WHERE mc.contextlevel = 50
+      AND u.username NOT IN ('12345678')
+      AND c.id IN ($cursos_in)
+      AND mr.id IN ('5','9','3')
+    GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.id, mr.name, ad.fecha, 
+             ucf.idprograma, ucf.idfacultad, ci.idcodigo, ci.grupo, ci.periodo, ci.nivel, 
+             ucf.edad, ucf.genero, ucf.celular, ucf.estrato, ucd.total_ingresos
+    ORDER BY c.fullname, ad.fecha, u.lastname, u.firstname";
 
-    $general = $resultados; // Todos los registros
+    // CONSULTA 2 - Datos resumidos (Hoja "Resumen")
+    $sql_resumen = "WITH AllDays AS (
+      SELECT generate_series(
+        :fecha_inicio::timestamp,
+        :fecha_fin::timestamp,
+        interval '1 day'
+      )::DATE AS fecha
+    ),
+    UserCourseDays AS (
+      SELECT 
+        u.id AS userid,
+        c.id AS courseid,
+        mr.id AS roleid,
+        COUNT(DISTINCT CASE WHEN mlsl.id IS NOT NULL THEN ad.fecha END) AS total_ingresos
+      FROM mdl_user u
+      CROSS JOIN AllDays ad
+      LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+      LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+      LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+      LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+      LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
+        AND mlsl.userid = u.id
+        AND mlsl.action = 'viewed'
+        AND mlsl.target IN ('course', 'course_module')
+        AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
+      WHERE mc.contextlevel = 50
+        AND u.username NOT IN ('12345678')
+        AND c.id IN ($cursos_in)
+        AND mr.id IN ('5','9')
+      GROUP BY u.id, c.id, mr.id
+    ),
+    UserCustomFields AS (
+      SELECT 
+        uid.userid,
+        MAX(CASE WHEN ufield.shortname = 'programa' THEN uid.data END) AS idprograma,
+        MAX(CASE WHEN ufield.shortname = 'facultad' THEN uid.data END) AS idfacultad,
+        MAX(CASE WHEN ufield.shortname = 'edad' THEN uid.data END) AS edad,
+        MAX(CASE WHEN ufield.shortname = 'genero' THEN uid.data END) AS genero,
+        MAX(CASE WHEN ufield.shortname = 'celular' THEN uid.data END) AS celular,
+        MAX(CASE WHEN ufield.shortname = 'estrato' THEN uid.data END) AS estrato
+      FROM mdl_user_info_data uid
+      JOIN mdl_user_info_field ufield ON ufield.id = uid.fieldid
+      WHERE ufield.shortname IN ('programa', 'facultad', 'edad', 'genero', 'celular', 'estrato')
+      GROUP BY uid.userid
+    )
+    SELECT 
+      u.username AS codigo,
+      u.firstname AS nombre,
+      u.lastname AS apellidos,
+      u.email AS correo,
+      c.fullname AS curso,
+      mr.name AS rol,
+      COALESCE(ucf.idprograma, '0') AS idprograma,
+      COALESCE(u.department, '0') as programa,
+      COALESCE(ucf.idfacultad, '0') AS idfacultad,
+      COALESCE(u.institution, '0') as facultad,
+      COALESCE(ucf.edad, '0') AS edad,
+      COALESCE(ucf.genero, '0') AS genero,
+      COALESCE(ucf.celular, '0') AS celular,
+      COALESCE(ucf.estrato, '0') AS estrato,
+      COALESCE(ucd.total_ingresos, 0) AS total_ingresos
+    FROM mdl_user u
+    LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+    LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+    LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+    LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+    LEFT JOIN UserCourseDays ucd ON ucd.userid = u.id AND ucd.courseid = c.id AND ucd.roleid = mr.id
+    LEFT JOIN UserCustomFields ucf ON ucf.userid = u.id
+    WHERE mc.contextlevel = 50
+      AND u.username NOT IN ('12345678')
+      AND c.id IN ($cursos_in)
+      AND mr.id IN ('5','9','3')
+    GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.name, ucd.total_ingresos, 
+             ucf.idprograma, ucf.idfacultad, ucf.edad, ucf.genero, ucf.celular, ucf.estrato, u.department, u.institution
+    ORDER BY c.fullname, u.lastname, u.firstname";
 
-    function generarArchivoProduccion($datos, $nombreArchivo, $tituloHoja) {
-        $spreadsheet = new Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle($tituloHoja);
-        
-        // Encabezados con las nuevas columnas
-        $headers = [
-            'Código', 'Rol', 'Nombre', 'Apellidos', 'Correo', 'Curso', 'Total Ingresos',
-            'ID Programa', 'ID Facultad', 'Código Curso', 'Grupo', 'Periodo', 'Nivel Educativo',
-            'Edad', 'Género', 'Celular', 'Estrato', 'Nro. Doc. Docente'
-        ];
-        $sheet->fromArray($headers, null, 'A1');
-        
-        // Datos
-        $row = 2;
-        foreach ($datos as $item) {
-            // Asegurar que 'total_ingresos' sea un número (incluso si viene como NULL o vacío)
-            $totalIngresos = isset($item['total_ingresos']) ? (int)$item['total_ingresos'] : 0;
-            
-            // Escribir los datos normalmente
-            $sheet->setCellValue('A' . $row, $item['codigo']);
-            $sheet->setCellValue('B' . $row, $item['rol']);
-            $sheet->setCellValue('C' . $row, $item['nombre']);
-            $sheet->setCellValue('D' . $row, $item['apellidos']);
-            $sheet->setCellValue('E' . $row, $item['correo']);
-            $sheet->setCellValue('F' . $row, $item['curso']);
-            
-            // Forzar el valor numérico en la celda de Total Ingresos
-            $sheet->setCellValueExplicit(
-                'G' . $row,
-                $totalIngresos,
-                \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC
-            );
-            
-            // Nuevas columnas
-            $sheet->setCellValue('H' . $row, $item['idprograma']);
-            $sheet->setCellValue('I' . $row, $item['idfacultad']);
-            $sheet->setCellValue('J' . $row, $item['idcodigo']);
-            $sheet->setCellValue('K' . $row, $item['grupo']);
-            $sheet->setCellValue('L' . $row, $item['periodo']);
-            $sheet->setCellValue('M' . $row, $item['nivel']);
-            $sheet->setCellValue('N' . $row, $item['edad']);
-            $sheet->setCellValue('O' . $row, $item['genero']);
-            $sheet->setCellValue('P' . $row, $item['celular']);
-            $sheet->setCellValue('Q' . $row, $item['estrato']);
-            $sheet->setCellValue('R' . $row, $item['nrodoc']);
-            
-            $row++;
+    // Combinar todos los parámetros
+    $params = [
+        ':fecha_inicio' => $fecha_inicio, 
+        ':fecha_fin' => $fecha_fin
+    ] + $cursos_params;
+
+    // Función para crear una hoja en el Excel con manejo de valores nulos
+    function createSheet($spreadsheet, $data, $title, $sheetIndex = 0) {
+        if ($sheetIndex > 0) {
+            $sheet = $spreadsheet->createSheet();
+        } else {
+            $sheet = $spreadsheet->getActiveSheet();
         }
         
-        // Opcional: Formatear columnas numéricas
-        $sheet->getStyle('G2:G' . ($row - 1))
-              ->getNumberFormat()
-              ->setFormatCode('0'); // Formato numérico sin decimales
+        $sheet->setTitle(substr($title, 0, 31));
         
-        (new Xlsx($spreadsheet))->save($nombreArchivo);
+        if (!empty($data)) {
+            // Escribir encabezados
+            $headers = array_keys($data[0]);
+            $sheet->fromArray($headers, null, 'A1');
+            
+            // Escribir datos fila por fila
+            $rowNumber = 2;
+            foreach ($data as $row) {
+                $colLetter = 'A';
+                foreach ($row as $value) {
+                    // Convertir valores nulos o vacíos a 0
+                    if ($value === null || $value === '') {
+                        $value = 0;
+                    }
+                    
+                    // Establecer el valor en la celda
+                    $cell = $sheet->getCell($colLetter . $rowNumber);
+                    if (is_numeric($value)) {
+                        $cell->setValueExplicit($value, DataType::TYPE_NUMERIC);
+                    } else {
+                        $cell->setValueExplicit($value, DataType::TYPE_STRING);
+                    }
+                    
+                    $colLetter++;
+                }
+                $rowNumber++;
+            }
+        }
+        
+        return $sheet;
     }
 
-    // Generar archivos
-    generarArchivoProduccion($profesores, $temp_profesores, 'Profesores');
-    generarArchivoProduccion($estudiantes, $temp_estudiantes, 'Estudiantes');
-    generarArchivoProduccion($asesores, $temp_asesores, 'Asesores');
-    generarArchivoProduccion($general, $temp_general, 'General');
+    // Procesar consulta detalle
+    $stmt_detalle = $pdo->prepare($sql_detalle);
+    $stmt_detalle->execute($params);
+    $resultados_detalle = $stmt_detalle->fetchAll(PDO::FETCH_ASSOC);
+    $resultados_detalle = sanitizeData($resultados_detalle);
+
+    // Procesar consulta resumen
+    $stmt_resumen = $pdo->prepare($sql_resumen);
+    $stmt_resumen->execute($params);
+    $resultados_resumen = $stmt_resumen->fetchAll(PDO::FETCH_ASSOC);
+    $resultados_resumen = sanitizeData($resultados_resumen);
+
+    // Filtrar resultados
+    $estudiantes_detalle = array_values(array_filter($resultados_detalle, function($fila) {
+        return in_array($fila['rol_id'], [5, 9]);
+    }));
+    
+    $profesores_detalle = array_values(array_filter($resultados_detalle, function($fila) {
+        return $fila['rol_id'] == 3;
+    }));
+
+    $estudiantes_resumen = array_values(array_filter($resultados_resumen, function($fila) {
+        return in_array($fila['rol'], ['Estudiante', 'Student']);
+    }));
+    
+    $profesores_resumen = array_values(array_filter($resultados_resumen, function($fila) {
+        return $fila['rol'] == 'Profesor';
+    }));
+
+    // Generar archivos Excel con dos hojas
+    $fecha_para_nombre = $lunes_pasado->format('Ymd');
+    $nombre_estudiantes = "estudiantes_pregrado_{$fecha_para_nombre}.xlsx";
+    $nombre_profesores = "profesores_pregrado_{$fecha_para_nombre}.xlsx";
+
+    $temp_dir = sys_get_temp_dir();
+    
+    // Archivo estudiantes
+    if (!empty($estudiantes_detalle) || !empty($estudiantes_resumen)) {
+        $spreadsheet = new Spreadsheet();
+        
+        // Hoja 1: Power BI (detalle)
+        createSheet($spreadsheet, $estudiantes_detalle, 'Power BI', 0);
+        
+        // Hoja 2: Resumen
+        createSheet($spreadsheet, $estudiantes_resumen, 'Resumen', 1);
+        
+        $writer = new Xlsx($spreadsheet);
+        $temp_estudiantes = $temp_dir . '/' . uniqid('estudiantes_', true) . '.xlsx';
+        $writer->save($temp_estudiantes);
+    }
+
+    // Archivo profesores
+    if (!empty($profesores_detalle) || !empty($profesores_resumen)) {
+        $spreadsheet = new Spreadsheet();
+        
+        // Hoja 1: Power BI (detalle)
+        createSheet($spreadsheet, $profesores_detalle, 'Power BI', 0);
+        
+        // Hoja 2: Resumen
+        createSheet($spreadsheet, $profesores_resumen, 'Resumen', 1);
+        
+        $writer = new Xlsx($spreadsheet);
+        $temp_profesores = $temp_dir . '/' . uniqid('profesores_', true) . '.xlsx';
+        $writer->save($temp_profesores);
+    }
 
     // Crear ZIP
     $zip = new ZipArchive();
-    if ($zip->open($zip_file, ZipArchive::CREATE) !== TRUE) {
-        throw new Exception("No se pudo crear el archivo ZIP");
-    }
-    $zip->addFile($temp_profesores, basename($temp_profesores));
-    $zip->addFile($temp_estudiantes, basename($temp_estudiantes));
-    $zip->addFile($temp_asesores, basename($temp_asesores));
-    $zip->addFile($temp_general, basename($temp_general));
-    if (!$zip->close()) {
-        throw new Exception("Error al cerrar el archivo ZIP");
+    $zip_file = $temp_dir . '/' . uniqid('reporte_', true) . '.zip';
+    if ($zip->open($zip_file, ZipArchive::CREATE) === TRUE) {
+        if (file_exists($temp_estudiantes)) {
+            $zip->addFile($temp_estudiantes, $nombre_estudiantes);
+        }
+        if (file_exists($temp_profesores)) {
+            $zip->addFile($temp_profesores, $nombre_profesores);
+        }
+        $zip->close();
     }
 
-    // Configurar y enviar correo con PHPMailer
+    // Enviar correo
     $mail = new PHPMailer(true);
-    $mail->setFrom($remitente, 'Reporte Moodle');
-    foreach ($correo_destino as $correo) {
-        $mail->addAddress($correo);
+    $mail->setFrom('noreply-univirtual@utp.edu.co', 'Reporte Moodle');
+    
+    if ($modo_prueba) {
+        $mail->addAddress($correo_pruebas);
+        $mail->Subject = '[PRUEBA] Reporte de Ingresos Semanal (04 Ago - '.$fecha_fin_simple.')';
+    } else {
+        foreach ($correo_destino as $correo) {
+            $mail->addAddress($correo);
+        }
+        $mail->Subject = 'Reporte de Ingresos Semanal (04 Ago - '.$fecha_fin_simple.')';
     }
     
-    $fecha_inicio_formatted = $fecha_inicio_obj->format('d/m/Y');
-    $fecha_fin_formatted = $lunes_pasado->format('d/m/Y');
-    
-    $mail->Subject = 'Reporte de Ingresos Acumulado - ' . $fecha_para_nombre;
-    $mail->Body = "Cordial Saludo,<br><br>
-                 Adjunto el Reporte de Ingresos Acumulado de las asignaturas de pregrado.<br><br>
-                 <strong>Período del reporte:</strong> $fecha_inicio_formatted a $fecha_fin_formatted<br>
-                 <strong>Total registros:</strong> " . count($resultados) . "<br>
-                 <strong>Desglose:</strong><br>
-                 - Profesores: " . count($profesores) . "<br>
-                 - Estudiantes: " . count($estudiantes) . "<br>
-                 - General: " . count($general) . "<br>
-                 - Asesores: " . count($asesores)
-                 ;
-    $mail->isHTML(true);
+    $mail->Body = "Reporte correspondiente al período del {$fecha_inicio_simple} al {$fecha_fin_simple}";
+    $mail->isHTML(false);
     
     if (file_exists($zip_file)) {
-        $mail->addAttachment($zip_file, "reporte_ingresos_acumulado_asignaturas_pregrado_{$fecha_para_nombre}.zip");
+        $mail->addAttachment($zip_file, "reporte_asignaturas_04ago-".$fecha_fin_simple.".zip");
     }
     
     $mail->send();
 
-    // Eliminar archivos temporales
-    @unlink($temp_profesores);
-    @unlink($temp_estudiantes);
-    @unlink($temp_asesores);
-    @unlink($temp_general);
-    @unlink($zip_file);
+    // Limpieza
+    if (file_exists($temp_estudiantes)) unlink($temp_estudiantes);
+    if (file_exists($temp_profesores)) unlink($temp_profesores);
+    if (file_exists($zip_file)) unlink($zip_file);
 
-    // Enviar notificación de éxito
-    mail($correo_notificacion, 'Reporte Exitoso', 
-        "El reporte fue generado correctamente.\n" .
-        "Período: $fecha_inicio_formatted a $fecha_fin_formatted\n" .
-        "Total registros: " . count($resultados) . "\n" .
-        "Profesores: " . count($profesores) . "\n" .
-        "Estudiantes: " . count($estudiantes) . "\n" .
-        "General: " . count($general) . "\n" .
-        "Asesores: " . count($asesores));
-
+    // Notificación
+    $mensaje_notificacion = $modo_prueba ? 
+        "[PRUEBA] Reporte generado correctamente (04 Ago - $fecha_fin_simple)" :
+        "Reporte enviado correctamente (04 Ago - $fecha_fin_simple)";
+    
+    mail($correo_notificacion, 'Estado Reporte', $mensaje_notificacion);
+    
+    if ($modo_prueba) {
+        echo "Modo prueba: Reporte generado y enviado a $correo_pruebas<br>";
+        echo "Periodo del reporte: {$fecha_inicio_simple} al {$fecha_fin_simple}<br>";
+        echo "Archivos generados:<br>";
+        echo "- $nombre_estudiantes (con hojas 'Power BI' y 'Resumen')<br>";
+        echo "- $nombre_profesores (con hojas 'Power BI' y 'Resumen')<br>";
+    }
+} catch (PDOException $e) {
+    mail($correo_notificacion, 'Error Reporte - BD', 'Error: ' . $e->getMessage());
+    echo "Error BD: " . $e->getMessage();
+} catch (PHPMailer\PHPMailer\Exception $e) {
+    mail($correo_notificacion, 'Error Reporte - Correo', 'Error: ' . $e->getMessage());
+    echo "Error correo: " . $e->getMessage();
 } catch (Exception $e) {
-    // Enviar notificación de error
-    mail($correo_notificacion, 'Error en Reporte', 
-        "Error: " . $e->getMessage() . "\n" .
-        "Período: $fecha_inicio_simple a $fecha_fin_simple\n" .
-        "Hora: " . date('Y-m-d H:i:s'));
-    exit("Error: " . $e->getMessage());
+    mail($correo_notificacion, 'Error Reporte', 'Error: ' . $e->getMessage());
+    echo "Error: " . $e->getMessage();
 }

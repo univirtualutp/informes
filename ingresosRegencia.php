@@ -1,31 +1,48 @@
 <?php
-// Cargar dependencias (solo PHPMailer para el envío de correos)
+// Configuración inicial
+date_default_timezone_set('America/Bogota');
 require 'vendor/autoload.php'; 
-// Incluir archivo de configuración de la base de datos
 require_once __DIR__ . '/db_moodle_config.php';
+
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 
-// Configuración de la base de datos y correos
-$host = 'localhost';
-$dbname = 'moodle';
-$user = 'moodle';
-$pass = 'M00dl3';
+// Configuración de correos
 $correo_destino = ['soporteunivirtual@utp.edu.co', 'univirtual-utp@utp.edu.co'];
 $correo_notificacion = 'soporteunivirtual@utp.edu.co';
+$correo_pruebas = 'daniel.pardo@utp.edu.co';
+
+// Modo prueba (cambiar a false para producción)
+$modo_prueba = false;
 
 // Calcular fechas (martes a lunes)
-$hoy = new DateTime();
+$hoy = new DateTime('2025-08-11');
 $lunes = clone $hoy;
-$lunes->modify('last monday');
+$lunes->modify('next monday');
 $martes = clone $lunes;
 $martes->modify('-6 days');
-
 $fecha_inicio = $martes->format('Y-m-d 00:00:00');
 $fecha_fin = $lunes->format('Y-m-d 23:59:59');
 
+$cursos = ['851','852','845','846','849','850','847','848'];
+
+// Función mejorada para reemplazar valores nulos o vacíos con 0
+function sanitizeData($data) {
+    foreach ($data as &$row) {
+        foreach ($row as &$value) {
+            if ($value === null || $value === '') {
+                $value = 0;
+            }
+        }
+    }
+    return $data;
+}
+
 try {
-    // Conexión a la base de datos PostgreSQL
+    // Conexión a la base de datos
     $pdo = new PDO(
         "pgsql:host=".DB_HOST.";dbname=".DB_NAME.";port=".DB_PORT, 
         DB_USER, 
@@ -33,271 +50,315 @@ try {
     );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // Consulta SQL
-    $sql = "WITH AllDays AS (
-        SELECT generate_series(
-            :fecha_inicio::timestamp,
-            :fecha_fin::timestamp,
-            interval '1 day'
-        )::DATE AS fecha
+    // Crear parámetros nombrados para los cursos
+    $cursos_params = [];
+    foreach ($cursos as $i => $curso_id) {
+        $cursos_params[":curso_$i"] = $curso_id;
+    }
+    $cursos_in = implode(',', array_keys($cursos_params));
+
+    // CONSULTA 1 - Datos detallados (Hoja "Power BI")
+    $sql_detalle = "WITH AllDays AS (
+      SELECT generate_series(
+        :fecha_inicio::timestamp,
+        :fecha_fin::timestamp,
+        interval '1 day'
+      )::DATE AS fecha
     ),
-    CourseLog AS (
-        SELECT 
-            u.id AS userid,
-            c.id AS courseid,
-            COUNT(DISTINCT DATE_TRUNC('day', to_timestamp(l.timecreated))) AS dias_activos,
-            COUNT(DISTINCT l.id) AS ingresos_totales
-        FROM mdl_logstore_standard_log AS l
-        JOIN mdl_user AS u ON l.userid = u.id
-        JOIN mdl_context AS ctx ON l.contextid = ctx.id
-        JOIN mdl_course AS c ON ctx.instanceid = c.id
-        WHERE 
-            l.action = 'viewed' 
-            AND l.target IN ('course', 'course_module')
-            AND l.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        GROUP BY u.id, c.id
+    UserCourseDays AS (
+      SELECT 
+        u.id AS userid,
+        c.id AS courseid,
+        mr.id AS roleid,
+        COUNT(DISTINCT CASE WHEN mlsl.id IS NOT NULL THEN ad.fecha END) AS total_ingresos
+      FROM mdl_user u
+      CROSS JOIN AllDays ad
+      LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+      LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+      LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+      LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+      LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
+        AND mlsl.userid = u.id
+        AND mlsl.action = 'viewed'
+        AND mlsl.target IN ('course', 'course_module')
+        AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
+      WHERE mc.contextlevel = 50
+        AND u.username NOT IN ('12345678')
+        AND c.id IN ($cursos_in)
+        AND mr.id IN ('5','9')
+      GROUP BY u.id, c.id, mr.id
+    ),
+    UserCustomFields AS (
+      SELECT 
+        uid.userid,
+        MAX(CASE WHEN ufield.shortname = 'programa' THEN uid.data END) AS idprograma,
+        MAX(CASE WHEN ufield.shortname = 'facultad' THEN uid.data END) AS idfacultad,
+        MAX(CASE WHEN ufield.shortname = 'edad' THEN uid.data END) AS edad,
+        MAX(CASE WHEN ufield.shortname = 'genero' THEN uid.data END) AS genero,
+        MAX(CASE WHEN ufield.shortname = 'celular' THEN uid.data END) AS celular,
+        MAX(CASE WHEN ufield.shortname = 'estrato' THEN uid.data END) AS estrato
+      FROM mdl_user_info_data uid
+      JOIN mdl_user_info_field ufield ON ufield.id = uid.fieldid
+      WHERE ufield.shortname IN ('programa', 'facultad', 'edad', 'genero', 'celular', 'estrato')
+      GROUP BY uid.userid
+    ),
+    CourseInfo AS (
+      SELECT 
+        cfidata.instanceid,
+        MAX(CASE WHEN cfield.shortname = 'codigo_curso' THEN cfidata.value END) AS idcodigo,
+        MAX(CASE WHEN cfield.shortname = 'grupo_curso' THEN cfidata.value END) AS grupo,
+        MAX(CASE WHEN cfield.shortname = 'periodo' THEN cfidata.value END) AS periodo,
+        MAX(CASE WHEN cfield.shortname = 'nivel_educativo' THEN cfidata.value END) AS nivel
+      FROM mdl_customfield_data cfidata
+      JOIN mdl_customfield_field cfield ON cfield.id = cfidata.fieldid
+      WHERE cfield.shortname IN ('codigo_curso', 'grupo_curso', 'periodo', 'nivel_educativo')
+      GROUP BY cfidata.instanceid
     )
-    SELECT DISTINCT
-        u.username AS codigo,
-        u.firstname AS nombre,
-        u.lastname AS apellidos,
-        r.id AS rol_id,
-        r.name AS rol,
-        u.email AS correo,
-        c.id AS id_curso,
-        c.fullname AS curso,
-        COALESCE(cl.dias_activos, 0) AS ingresos,
-        COALESCE(cl.ingresos_totales, 0) AS interacciones_en_aula,
-        COALESCE((
-            SELECT COUNT(DISTINCT m.id)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON mcm.userid = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE m.useridfrom = u.id
-            AND u.username <> '12345678'
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), 0) AS mensajes_enviados,
-        COALESCE((
-            SELECT COUNT(DISTINCT m.id)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), 0) AS mensajes_recibidos,
-        COALESCE((
-            SELECT COUNT(DISTINCT m.id)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            LEFT JOIN mdl_message_user_actions mua ON m.id = mua.messageid AND mua.userid = u.id AND mua.action = 1
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND mua.id IS NULL
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), 0) AS mensajes_sin_leer,
-        COALESCE((
-            SELECT TO_TIMESTAMP(MAX(m.timecreated))
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON mcm.userid = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE m.useridfrom = u.id
-            AND u.username <> '12345678'
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), NULL) AS ultimo_mensaje_enviado,
-        COALESCE((
-            SELECT TO_TIMESTAMP(MAX(m.timecreated))
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), NULL) AS ultimo_mensaje_recibido,
-        COALESCE((
-            SELECT TO_TIMESTAMP(MAX(m.timecreated))
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            JOIN mdl_message_user_actions mua ON m.id = mua.messageid AND mua.userid = u.id AND mua.action = 1
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-        ), NULL) AS ultimo_mensaje_leido,
-        COALESCE((
-            SELECT CONCAT(u2.firstname, ' ', u2.lastname)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON mcm.userid = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            WHERE m.useridfrom = u.id
-            AND u.username <> '12345678'
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-            AND m.timecreated = (
-                SELECT MAX(m2.timecreated)
-                FROM mdl_messages m2
-                JOIN mdl_message_conversations mc2 ON m2.conversationid = mc2.id
-                JOIN mdl_message_conversation_members mcm2 ON mc2.id = mcm2.conversationid
-                JOIN mdl_user u3 ON mcm2.userid = u3.id AND u3.id != u.id
-                JOIN mdl_role_assignments ra3 ON u3.id = ra3.userid
-                JOIN mdl_context ctx3 ON ra3.contextid = ctx3.id AND ctx3.contextlevel = 50
-                WHERE m2.useridfrom = u.id
-                AND ctx3.instanceid = c.id
-                AND ra3.roleid IN (5, 11, 16, 17)
-                AND m2.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-            )
-            LIMIT 1
-        ), NULL) AS ultimo_mensaje_enviado_a,
-        COALESCE((
-            SELECT CONCAT(u2.firstname, ' ', u2.lastname)
-            FROM mdl_messages m
-            JOIN mdl_message_conversations mc ON m.conversationid = mc.id
-            JOIN mdl_message_conversation_members mcm ON mc.id = mcm.conversationid
-            JOIN mdl_user u2 ON m.useridfrom = u2.id AND u2.id != u.id
-            JOIN mdl_role_assignments ra2 ON u2.id = ra2.userid
-            JOIN mdl_context ctx2 ON ra2.contextid = ctx2.id AND ctx2.contextlevel = 50
-            JOIN mdl_message_user_actions mua ON m.id = mua.messageid AND mua.userid = u.id AND mua.action = 1
-            WHERE mcm.userid = u.id
-            AND ctx2.instanceid = c.id
-            AND ra2.roleid IN (5, 11, 16, 17)
-            AND m.timecreated = (
-                SELECT MAX(m2.timecreated)
-                FROM mdl_messages m2
-                JOIN mdl_message_conversations mc2 ON m2.conversationid = mc2.id
-                JOIN mdl_message_conversation_members mcm2 ON mc2.id = mcm2.conversationid
-                JOIN mdl_user u3 ON m2.useridfrom = u3.id AND u3.id != u.id
-                JOIN mdl_role_assignments ra3 ON u3.id = ra3.userid
-                JOIN mdl_context ctx3 ON ra3.contextid = ctx3.id AND ctx3.contextlevel = 50
-                JOIN mdl_message_user_actions mua2 ON m2.id = mua2.messageid AND mua2.userid = u.id AND mua2.action = 1
-                WHERE mcm2.userid = u.id
-                AND ctx3.instanceid = c.id
-                AND ra3.roleid IN (5, 11, 16, 17)
-                AND m2.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-            )
-            LIMIT 1
-        ), NULL) AS ultimo_mensaje_leido_de
+    SELECT 
+      u.username AS codigo,
+      u.firstname AS nombre,
+      u.lastname AS apellidos,
+      u.email AS correo,
+      c.fullname AS curso,
+      mr.name AS rol,
+      mr.id AS rol_id,
+      COALESCE(ucf.idprograma, '0') AS idprograma,
+      COALESCE(ucf.idfacultad, '0') AS idfacultad,
+      COALESCE(ci.idcodigo, '0') AS idcodigo,
+      COALESCE(ci.grupo, '0') AS grupo,
+      COALESCE(ci.periodo, '0') AS periodo,
+      COALESCE(ci.nivel, '0') AS nivel,
+      COALESCE(ucf.edad, '0') AS edad,
+      COALESCE(ucf.genero, '0') AS genero,
+      COALESCE(ucf.celular, '0') AS celular,
+      COALESCE(ucf.estrato, '0') AS estrato,
+      ad.fecha,
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM mdl_logstore_standard_log mlsl
+        WHERE mlsl.courseid = c.id
+          AND mlsl.userid = u.id
+          AND mlsl.action = 'viewed'
+          AND mlsl.target IN ('course', 'course_module')
+          AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
+      ) THEN 1 ELSE 0 END AS ingreso_dia,
+      COALESCE(ucd.total_ingresos, 0) AS total_ingresos,
+      COALESCE((SELECT CONCAT(u2.idnumber) 
+       FROM mdl_role_assignments AS ra
+       JOIN mdl_context AS ctx ON ra.contextid = ctx.id
+       JOIN mdl_user AS u2 ON u2.id = ra.userid
+       WHERE ra.roleid = 3
+         AND ctx.instanceid = c.id
+       LIMIT 1), '0') AS nrodoc
     FROM mdl_user u
-    JOIN mdl_role_assignments ra ON ra.userid = u.id
-    JOIN mdl_role r ON ra.roleid = r.id 
-    JOIN mdl_context mc ON ra.contextid = mc.id
-    JOIN mdl_course c ON mc.instanceid = c.id
-    LEFT JOIN CourseLog cl ON cl.userid = u.id AND cl.courseid = c.id
+    CROSS JOIN AllDays ad
+    LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+    LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+    LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+    LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+    LEFT JOIN UserCustomFields ucf ON ucf.userid = u.id
+    LEFT JOIN CourseInfo ci ON ci.instanceid = c.id
+    LEFT JOIN UserCourseDays ucd ON ucd.userid = u.id AND ucd.courseid = c.id AND ucd.roleid = mr.id
     WHERE mc.contextlevel = 50
-      AND u.username <> '12345678'
-      AND c.id IN (556,557,533,550,532,552,534,554,566,547,563,537,565,536)
-      AND r.id IN (3,5,9,16,17)
-    ORDER BY c.fullname, u.lastname, u.firstname;";
+      AND u.username NOT IN ('12345678')
+      AND c.id IN ($cursos_in)
+      AND mr.id IN ('5','9','3')
+    GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.id, mr.name, ad.fecha, 
+             ucf.idprograma, ucf.idfacultad, ci.idcodigo, ci.grupo, ci.periodo, ci.nivel, 
+             ucf.edad, ucf.genero, ucf.celular, ucf.estrato, ucd.total_ingresos
+    ORDER BY c.fullname, ad.fecha, u.lastname, u.firstname";
 
-    // Preparar y ejecutar la consulta
-    $stmt = $pdo->prepare($sql);
+    // CONSULTA 2 - Datos resumidos (Hoja "Resumen")
+    $sql_resumen = "WITH AllDays AS (
+      SELECT generate_series(
+        :fecha_inicio::timestamp,
+        :fecha_fin::timestamp,
+        interval '1 day'
+      )::DATE AS fecha
+    ),
+    UserCourseDays AS (
+      SELECT 
+        u.id AS userid,
+        c.id AS courseid,
+        mr.id AS roleid,
+        COUNT(DISTINCT CASE WHEN mlsl.id IS NOT NULL THEN ad.fecha END) AS total_ingresos
+      FROM mdl_user u
+      CROSS JOIN AllDays ad
+      LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+      LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+      LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+      LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+      LEFT JOIN mdl_logstore_standard_log mlsl ON mlsl.courseid = c.id
+        AND mlsl.userid = u.id
+        AND mlsl.action = 'viewed'
+        AND mlsl.target IN ('course', 'course_module')
+        AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
+      WHERE mc.contextlevel = 50
+        AND u.username NOT IN ('12345678')
+        AND c.id IN ($cursos_in)
+        AND mr.id IN ('5','9')
+      GROUP BY u.id, c.id, mr.id
+    ),
+    UserCustomFields AS (
+      SELECT 
+        uid.userid,
+        MAX(CASE WHEN ufield.shortname = 'programa' THEN uid.data END) AS idprograma,
+        MAX(CASE WHEN ufield.shortname = 'facultad' THEN uid.data END) AS idfacultad,
+        MAX(CASE WHEN ufield.shortname = 'edad' THEN uid.data END) AS edad,
+        MAX(CASE WHEN ufield.shortname = 'genero' THEN uid.data END) AS genero,
+        MAX(CASE WHEN ufield.shortname = 'celular' THEN uid.data END) AS celular,
+        MAX(CASE WHEN ufield.shortname = 'estrato' THEN uid.data END) AS estrato
+      FROM mdl_user_info_data uid
+      JOIN mdl_user_info_field ufield ON ufield.id = uid.fieldid
+      WHERE ufield.shortname IN ('programa', 'facultad', 'edad', 'genero', 'celular', 'estrato')
+      GROUP BY uid.userid
+    )
+    SELECT 
+      u.username AS codigo,
+      u.firstname AS nombre,
+      u.lastname AS apellidos,
+      u.email AS correo,
+      c.fullname AS curso,
+      mr.name AS rol,
+      COALESCE(ucf.idprograma, '0') AS idprograma,
+      COALESCE(u.department, '0') as programa,
+      COALESCE(ucf.idfacultad, '0') AS idfacultad,
+      COALESCE(u.institution, '0') as facultad,
+      COALESCE(ucf.edad, '0') AS edad,
+      COALESCE(ucf.genero, '0') AS genero,
+      COALESCE(ucf.celular, '0') AS celular,
+      COALESCE(ucf.estrato, '0') AS estrato,
+      COALESCE(ucd.total_ingresos, 0) AS total_ingresos
+    FROM mdl_user u
+    LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
+    LEFT JOIN mdl_role mr ON mra.roleid = mr.id
+    LEFT JOIN mdl_context mc ON mc.id = mra.contextid
+    LEFT JOIN mdl_course c ON c.id = mc.instanceid 
+    LEFT JOIN UserCourseDays ucd ON ucd.userid = u.id AND ucd.courseid = c.id AND ucd.roleid = mr.id
+    LEFT JOIN UserCustomFields ucf ON ucf.userid = u.id
+    WHERE mc.contextlevel = 50
+      AND u.username NOT IN ('12345678')
+      AND c.id IN ($cursos_in)
+      AND mr.id IN ('5','9','3')
+    GROUP BY u.id, u.username, u.firstname, u.lastname, u.email, c.id, c.fullname, mr.name, ucd.total_ingresos, 
+             ucf.idprograma, ucf.idfacultad, ucf.edad, ucf.genero, ucf.celular, ucf.estrato, u.department, u.institution
+    ORDER BY c.fullname, u.lastname, u.firstname";
 
-    // Verificar que los parámetros estén correctamente definidos
+    // Combinar todos los parámetros
     $params = [
-        ':fecha_inicio' => $fecha_inicio,
+        ':fecha_inicio' => $fecha_inicio, 
         ':fecha_fin' => $fecha_fin
-    ];
+    ] + $cursos_params;
 
-    $stmt->execute($params); // Pasar los parámetros aquí
-    $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Función para reemplazar valores nulos o vacíos con 0
-    function replaceEmptyWithZero($array) {
-        return array_map(function($value) {
-            return ($value === null || $value === '') ? 0 : $value;
-        }, $array);
+    // Función para crear una hoja en el Excel con manejo de valores nulos (VERSIÓN CORREGIDA)
+    function createSheet($spreadsheet, $data, $title, $sheetIndex = 0) {
+        if ($sheetIndex > 0) {
+            $sheet = $spreadsheet->createSheet();
+        } else {
+            $sheet = $spreadsheet->getActiveSheet();
+        }
+        
+        $sheet->setTitle(substr($title, 0, 31));
+        
+        if (!empty($data)) {
+            // Escribir encabezados
+            $headers = array_keys($data[0]);
+            $sheet->fromArray($headers, null, 'A1');
+            
+            // Escribir datos fila por fila
+            $rowNumber = 2;
+            foreach ($data as $row) {
+                $colLetter = 'A';
+                foreach ($row as $value) {
+                    // Convertir valores nulos o vacíos a 0
+                    if ($value === null || $value === '') {
+                        $value = 0;
+                    }
+                    
+                    // Establecer el valor en la celda
+                    $cell = $sheet->getCell($colLetter . $rowNumber);
+                    if (is_numeric($value)) {
+                        $cell->setValueExplicit($value, DataType::TYPE_NUMERIC);
+                    } else {
+                        $cell->setValueExplicit($value, DataType::TYPE_STRING);
+                    }
+                    
+                    $colLetter++;
+                }
+                $rowNumber++;
+            }
+        }
+        
+        return $sheet;
     }
 
-    // Aplicar la función a cada fila de resultados
-    $resultados = array_map('replaceEmptyWithZero', $resultados);
+    // Procesar consulta detalle
+    $stmt_detalle = $pdo->prepare($sql_detalle);
+    $stmt_detalle->execute($params);
+    $resultados_detalle = $stmt_detalle->fetchAll(PDO::FETCH_ASSOC);
+    $resultados_detalle = sanitizeData($resultados_detalle);
 
-    // Separar resultados en estudiantes (roles 5, 9, 16) y profesores (rol 3)
-    $estudiantes = array_values(array_filter($resultados, function($fila) {
-        return in_array($fila['rol_id'], [5, 9, 16, 17]);
+    // Procesar consulta resumen
+    $stmt_resumen = $pdo->prepare($sql_resumen);
+    $stmt_resumen->execute($params);
+    $resultados_resumen = $stmt_resumen->fetchAll(PDO::FETCH_ASSOC);
+    $resultados_resumen = sanitizeData($resultados_resumen);
+
+    // Filtrar resultados
+    $estudiantes_detalle = array_values(array_filter($resultados_detalle, function($fila) {
+        return in_array($fila['rol_id'], [5, 9]);
     }));
-    $profesores = array_values(array_filter($resultados, function($fila) {
+    
+    $profesores_detalle = array_values(array_filter($resultados_detalle, function($fila) {
         return $fila['rol_id'] == 3;
     }));
 
-    // Definir nombres de archivos con fecha
+    $estudiantes_resumen = array_values(array_filter($resultados_resumen, function($fila) {
+        return in_array($fila['rol'], ['Estudiante', 'Student']);
+    }));
+    
+    $profesores_resumen = array_values(array_filter($resultados_resumen, function($fila) {
+        return $fila['rol'] == 'Profesor';
+    }));
+
+    // Generar archivos Excel con dos hojas
     $fecha_para_nombre = date('Ymd', strtotime($fecha_fin));
-    $nombre_estudiantes = "estudiantes_regencia_{$fecha_para_nombre}.csv";
-    $nombre_profesores = "profesores_regencia_{$fecha_para_nombre}.csv";
+    $nombre_estudiantes = "estudiantes_pregrado_{$fecha_para_nombre}.xlsx";
+    $nombre_profesores = "profesores_pregrado_{$fecha_para_nombre}.xlsx";
 
-    // Crear archivos temporales
     $temp_dir = sys_get_temp_dir();
-    $temp_estudiantes = $temp_dir . '/' . uniqid('estudiantes_', true) . '.csv';
-    $temp_profesores = $temp_dir . '/' . uniqid('profesores_', true) . '.csv';
-
-    // Generar archivo CSV para estudiantes si hay datos
-    if (!empty($estudiantes)) {
-        $file = fopen($temp_estudiantes, 'w');
-        // Agregar BOM (Byte Order Mark) para UTF-8
-        fwrite($file, "\xEF\xBB\xBF");
-        // Escribir la cabecera (nombres de las columnas)
-        fputcsv($file, array_keys($estudiantes[0]));
-        // Escribir los datos
-        foreach ($estudiantes as $fila) {
-            fputcsv($file, $fila);
-        }
-        fclose($file);
+    
+    // Archivo estudiantes
+    if (!empty($estudiantes_detalle) || !empty($estudiantes_resumen)) {
+        $spreadsheet = new Spreadsheet();
+        
+        // Hoja 1: Power BI (detalle)
+        createSheet($spreadsheet, $estudiantes_detalle, 'Power BI', 0);
+        
+        // Hoja 2: Resumen
+        createSheet($spreadsheet, $estudiantes_resumen, 'Resumen', 1);
+        
+        $writer = new Xlsx($spreadsheet);
+        $temp_estudiantes = $temp_dir . '/' . uniqid('estudiantes_', true) . '.xlsx';
+        $writer->save($temp_estudiantes);
     }
 
-    // Generar archivo CSV para profesores si hay datos
-    if (!empty($profesores)) {
-        $file = fopen($temp_profesores, 'w');
-        // Agregar BOM (Byte Order Mark) para UTF-8
-        fwrite($file, "\xEF\xBB\xBF");
-        // Escribir la cabecera (nombres de las columnas)
-        fputcsv($file, array_keys($profesores[0]));
-        // Escribir los datos
-        foreach ($profesores as $fila) {
-            fputcsv($file, $fila);
-        }
-        fclose($file);
+    // Archivo profesores
+    if (!empty($profesores_detalle) || !empty($profesores_resumen)) {
+        $spreadsheet = new Spreadsheet();
+        
+        // Hoja 1: Power BI (detalle)
+        createSheet($spreadsheet, $profesores_detalle, 'Power BI', 0);
+        
+        // Hoja 2: Resumen
+        createSheet($spreadsheet, $profesores_resumen, 'Resumen', 1);
+        
+        $writer = new Xlsx($spreadsheet);
+        $temp_profesores = $temp_dir . '/' . uniqid('profesores_', true) . '.xlsx';
+        $writer->save($temp_profesores);
     }
 
-    // Crear archivo ZIP
+    // Crear ZIP
     $zip = new ZipArchive();
     $zip_file = $temp_dir . '/' . uniqid('reporte_', true) . '.zip';
     if ($zip->open($zip_file, ZipArchive::CREATE) === TRUE) {
@@ -310,35 +371,54 @@ try {
         $zip->close();
     }
 
-    // Configurar y enviar correo con PHPMailer
+    // Enviar correo
     $mail = new PHPMailer(true);
-    $mail->setFrom('noreply-univirtual@utp.edu.co', 'Reporte Moodle Regencia');
-    foreach ($correo_destino as $correo) {
-        $mail->addAddress($correo);
+    $mail->setFrom('noreply-univirtual@utp.edu.co', 'Reporte Moodle');
+    
+    if ($modo_prueba) {
+        $mail->addAddress($correo_pruebas);
+        $mail->Subject = '[PRUEBA] Reporte de Ingresos Semanal - ' . $fecha_para_nombre;
+    } else {
+        foreach ($correo_destino as $correo) {
+            $mail->addAddress($correo);
+        }
+        $mail->Subject = 'Reporte de Ingresos Semanal - ' . $fecha_para_nombre;
     }
-    $mail->Subject = 'Reporte de Ingresos y Mensajes Semanal del programa en Regencia en Farmacia -' . $fecha_para_nombre;
-    $mail->Body = 'Cordial Saludo, Adjunto el Reporte de Ingresos y Mensajes Semanal del programa en Regencia en Farmacia, que contiene los archivos de estudiantes y profesores.';
+    
+    $mail->Body = "Reporte correspondiente al período del {$fecha_inicio} al {$fecha_fin}";
+    $mail->isHTML(false);
+    
     if (file_exists($zip_file)) {
-        $mail->addAttachment($zip_file, "reporte_asignaturas_regencia_{$fecha_para_nombre}.zip");
+        $mail->addAttachment($zip_file, "reporte_asignaturas_{$fecha_para_nombre}.zip");
     }
+    
     $mail->send();
 
-    // Eliminar archivos temporales
-    if (file_exists($temp_estudiantes)) {
-        unlink($temp_estudiantes);
-    }
-    if (file_exists($temp_profesores)) {
-        unlink($temp_profesores);
-    }
-    if (file_exists($zip_file)) {
-        unlink($zip_file);
-    }
+    // Limpieza
+    if (file_exists($temp_estudiantes)) unlink($temp_estudiantes);
+    if (file_exists($temp_profesores)) unlink($temp_profesores);
+    if (file_exists($zip_file)) unlink($zip_file);
 
-    // Enviar notificación de éxito
-    mail($correo_notificacion, 'Estado Reporte', 'El reporte  ingresos y mensajes del programa en Regencia en Farmacia fue enviado correctamente.');
+    // Notificación
+    $mensaje_notificacion = $modo_prueba ? 
+        "[PRUEBA] Reporte generado correctamente" :
+        "Reporte enviado correctamente";
+    
+    mail($correo_notificacion, 'Estado Reporte', $mensaje_notificacion);
+    
+    if ($modo_prueba) {
+        echo "Modo prueba: Reporte generado y enviado a $correo_pruebas<br>";
+        echo "Archivos generados:<br>";
+        echo "- $nombre_estudiantes (con hojas 'Power BI' y 'Resumen')<br>";
+        echo "- $nombre_profesores (con hojas 'Power BI' y 'Resumen')<br>";
+    }
+} catch (PDOException $e) {
+    mail($correo_notificacion, 'Error Reporte - BD', 'Error: ' . $e->getMessage());
+    echo "Error BD: " . $e->getMessage();
+} catch (PHPMailer\PHPMailer\Exception $e) {
+    mail($correo_notificacion, 'Error Reporte - Correo', 'Error: ' . $e->getMessage());
+    echo "Error correo: " . $e->getMessage();
 } catch (Exception $e) {
-    // Enviar notificación de error
-    mail($correo_notificacion, 'Error Reporte regencia', 'Error: ' . $e->getMessage());
-    echo "Error: " . $e->getMessage(); // Mostrar el error en la consola
+    mail($correo_notificacion, 'Error Reporte', 'Error: ' . $e->getMessage());
+    echo "Error: " . $e->getMessage();
 }
-?>
