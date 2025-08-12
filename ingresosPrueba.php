@@ -30,7 +30,7 @@ $fecha_fin = $lunes->format('Y-m-d 23:59:59');
 $cursos = ['786','583','804','596','820','790','821','819','789','580','799','616','617','797','798','842','844','621','805','584','581','802','619','627','800','801','618','588','815','589','590','594','595','787','788','605','607','793','573','791','606','792','608','609','795','611','794','610','586','814','623','622','624','733','574','604','796','576','612','577','614','830','615','783','579','784','785','591','587','810','625','582','803','620','592','816','817','593','740','822','823','824','825','741','826','827','828'];
 
 // Función mejorada para reemplazar valores nulos o vacíos con 0
-function sanitizeData(&$data) {
+function sanitizeData($data) {
     foreach ($data as &$row) {
         foreach ($row as &$value) {
             if ($value === null || $value === '') {
@@ -250,7 +250,7 @@ try {
         ':fecha_fin' => $fecha_fin
     ] + $cursos_params;
 
-    // Función para crear una hoja en el Excel con manejo de valores nulos
+    // Función para crear una hoja en el Excel con manejo de valores nulos (VERSIÓN CORREGIDA)
     function createSheet($spreadsheet, $data, $title, $sheetIndex = 0) {
         if ($sheetIndex > 0) {
             $sheet = $spreadsheet->createSheet();
@@ -265,26 +265,25 @@ try {
             $headers = array_keys($data[0]);
             $sheet->fromArray($headers, null, 'A1');
             
-            // Escribir datos con manejo explícito de tipos
+            // Escribir datos fila por fila
             $rowNumber = 2;
             foreach ($data as $row) {
-                $colNumber = 1;
+                $colLetter = 'A';
                 foreach ($row as $value) {
-                    $cell = $sheet->getCellByColumnAndRow($colNumber, $rowNumber);
-                    
                     // Convertir valores nulos o vacíos a 0
                     if ($value === null || $value === '') {
                         $value = 0;
                     }
                     
-                    // Establecer el valor con el tipo correcto
+                    // Establecer el valor en la celda
+                    $cell = $sheet->getCell($colLetter . $rowNumber);
                     if (is_numeric($value)) {
                         $cell->setValueExplicit($value, DataType::TYPE_NUMERIC);
                     } else {
                         $cell->setValueExplicit($value, DataType::TYPE_STRING);
                     }
                     
-                    $colNumber++;
+                    $colLetter++;
                 }
                 $rowNumber++;
             }
