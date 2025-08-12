@@ -8,7 +8,6 @@ use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 
 // Configuración de correos
 $correo_destino = ['soporteunivirtual@utp.edu.co', 'univirtual-utp@utp.edu.co'];
@@ -253,7 +252,7 @@ try {
             $sheet = $spreadsheet->getActiveSheet();
         }
         
-        $sheet->setTitle($title);
+        $sheet->setTitle(substr($title, 0, 31)); // Los títulos de hoja en Excel tienen un límite de 31 caracteres
         
         if (!empty($data)) {
             // Escribir encabezados
@@ -271,12 +270,13 @@ try {
         return $sheet;
     }
 
-    // Procesar estudiantes
+    // Procesar consulta detalle
     $stmt_detalle = $pdo->prepare($sql_detalle);
     $stmt_detalle->execute($params);
     $resultados_detalle = $stmt_detalle->fetchAll(PDO::FETCH_ASSOC);
     $resultados_detalle = array_map('replaceEmptyWithZero', $resultados_detalle);
 
+    // Procesar consulta resumen
     $stmt_resumen = $pdo->prepare($sql_resumen);
     $stmt_resumen->execute($params);
     $resultados_resumen = $stmt_resumen->fetchAll(PDO::FETCH_ASSOC);
