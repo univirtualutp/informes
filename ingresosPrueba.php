@@ -155,11 +155,11 @@ try {
              ucf.edad, ucf.genero, ucf.celular, ucf.estrato, ucd.total_ingresos
     ORDER BY c.fullname, ad.fecha, u.lastname, u.firstname";
 
-    // CONSULTA 2 - Datos resumidos (Hoja "Resumen")
+    // CONSULTA 2 - Datos resumidos (Hoja "Resumen") - CORRECCIÓN APLICADA AQUÍ
     $sql_resumen = "WITH AllDays AS (
       SELECT generate_series(
-        timestamp :fecha_inicio,
-        timestamp :fecha_fin,
+        :fecha_inicio::timestamp,
+        :fecha_fin::timestamp,
         interval '1 day'
       )::DATE AS fecha
     ),
