@@ -5,19 +5,29 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
+// Establecer la zona horaria
 date_default_timezone_set('America/Bogota');
 
+// Configuración de la base de datos
 $host = 'localhost';
 $dbname = 'moodle';
 $user = 'moodle';
 $pass = 'M00dl3';
-$correo_destino = ['daniel.pardo@utp.edu.co'];
-$correo_notificacion = 'daniel.pardo@utp.edu.co';
 
+// Configuración de correos 
+$correo_destino = ['soporteunivirtual@utp.edu.co','pedagogiaunivirtual@utp.edu.co','univirtual-utp@utp.edu.co'];
+$correo_notificacion = 'soporteunivirtual@utp.edu.co';
+
+// Definición de cursos en variable 
+$cursos_seleccionados = [
+    '734','841','736','839','735','838','737','840'
+];
+
+// Rangos de fechas
 $hoy = new DateTime();
 $lunes = clone $hoy;
 $lunes->modify('last monday');
-$fecha_inicio = new DateTime(date('Y') . '-03-14 00:00:00');
+$fecha_inicio = new DateTime(date('Y') . '-08-11 00:00:00');
 $fecha_fin = clone $lunes;
 $fecha_fin->setTime(23, 59, 59);
 
@@ -25,13 +35,18 @@ try {
     $pdo = new PDO("pgsql:host=$host;dbname=$dbname", $user, $pass);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
+    // Lista de grupos de cursos usando la variable definida arriba
     $grupos_cursos = [
-        'Explora_conecta' => ['556','557'],
-        'Fundamentos_Quimica_biologia' => ['533','550'],
-        'Introduccion_regencia' => ['532','552'],
-        'Uso_herramientas_ofimatica' => ['534', '554']
+        'actividades_pregrado' => $cursos_seleccionados
     ];
 
+    // Parámetros para las consultas
+    $params = [
+        ':fecha_inicio' => $fecha_inicio->format('Y-m-d H:i:s'),
+        ':fecha_fin' => $fecha_fin->format('Y-m-d H:i:s')
+    ];
+
+    // Directorio temporal
     $temp_dir = sys_get_temp_dir() . '/reportes_moodle_' . uniqid();
     if (!mkdir($temp_dir)) {
         throw new Exception("No se pudo crear el directorio temporal: $temp_dir");
@@ -39,572 +54,307 @@ try {
 
     $archivos_excel = [];
 
-    foreach ($grupos_cursos as $nombre_grupo => $cursos) {
-        $curso_referencia = $cursos[0];
+    // Consulta SQL modificada (usando la variable de cursos)
+    $sql = "
+    WITH 
+        all_users AS (
+            SELECT DISTINCT 
+                u.id AS userid, 
+                c.id AS courseid
+            FROM mdl_user u
+            JOIN mdl_role_assignments ra ON ra.userid = u.id
+            JOIN mdl_context mc ON ra.contextid = mc.id AND mc.contextlevel = 50
+            JOIN mdl_course c ON mc.instanceid = c.id AND c.id IN (" . implode(',', $cursos_seleccionados) . ")
+            WHERE u.username <> '12345678'
+              AND ra.roleid IN ('3','5', '9', '16','17')
+        ),
+        all_activities AS (
+            SELECT 
+                f.course AS courseid,
+                f.id AS activity_id,
+                'Foro' AS activity_type,
+                f.name AS activity_name,
+                TO_TIMESTAMP(f.duedate) AS fecha_apertura,
+                TO_TIMESTAMP(f.cutoffdate) AS fecha_cierre
+            FROM mdl_forum f
+            WHERE f.course IN (" . implode(',', $cursos_seleccionados) . ") AND f.name != 'Avisos'
+            UNION ALL
+            SELECT 
+                l.course AS courseid,
+                l.id AS activity_id,
+                'Lección' AS activity_type,
+                l.name AS activity_name,
+                TO_TIMESTAMP(l.available) AS fecha_apertura,
+                TO_TIMESTAMP(l.deadline) AS fecha_cierre
+            FROM mdl_lesson l
+            WHERE l.course IN (" . implode(',', $cursos_seleccionados) . ")
+            UNION ALL
+            SELECT 
+                a.course AS courseid,
+                a.id AS activity_id,
+                'Tarea' AS activity_type,
+                a.name AS activity_name,
+                TO_TIMESTAMP(a.allowsubmissionsfromdate) AS fecha_apertura,
+                TO_TIMESTAMP(a.duedate) AS fecha_cierre
+            FROM mdl_assign a
+            WHERE a.course IN (" . implode(',', $cursos_seleccionados) . ")
+            UNION ALL
+            SELECT 
+                q.course AS courseid,
+                q.id AS activity_id,
+                'Quiz' AS activity_type,
+                q.name AS activity_name,
+                TO_TIMESTAMP(q.timeopen) AS fecha_apertura,
+                TO_TIMESTAMP(q.timeclose) AS fecha_cierre
+            FROM mdl_quiz q
+            WHERE q.course IN (" . implode(',', $cursos_seleccionados) . ")
+            UNION ALL
+            SELECT 
+                g.course AS courseid,
+                g.id AS activity_id,
+                'Glosario' AS activity_type,
+                g.name AS activity_name,
+                TO_TIMESTAMP(g.timecreated) AS fecha_apertura,
+                TO_TIMESTAMP(g.timemodified) AS fecha_cierre
+            FROM mdl_glossary g
+            WHERE g.course IN (" . implode(',', $cursos_seleccionados) . ")
+            UNION ALL
+            SELECT 
+                s.course AS courseid,
+                s.id AS activity_id,
+                'SCORM' AS activity_type,
+                s.name AS activity_name,
+                TO_TIMESTAMP(s.timeopen) AS fecha_apertura,
+                TO_TIMESTAMP(s.timeclose) AS fecha_cierre
+            FROM mdl_scorm s
+            WHERE s.course IN (" . implode(',', $cursos_seleccionados) . ")
+        ),
+        user_activities AS (
+            SELECT 
+                au.userid,
+                au.courseid,
+                aa.activity_id,
+                aa.activity_type,
+                aa.activity_name,
+                aa.fecha_apertura,
+                aa.fecha_cierre
+            FROM all_users au
+            JOIN all_activities aa ON au.courseid = aa.courseid
+        ),
+        interacciones AS (
+            SELECT 
+                fp.userid,
+                f.course AS courseid,
+                f.id AS activity_id,
+                'Foro' AS activity_type,
+                COALESCE(gg.finalgrade, 0) AS nota,
+                TO_TIMESTAMP(gg.timemodified) AS fecha_calificacion,
+                CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END AS retroalimentada,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM mdl_grading_definitions gd
+                    JOIN mdl_grading_areas ga ON gd.areaid = ga.id
+                    JOIN mdl_context ctx ON ga.contextid = ctx.id AND ctx.contextlevel = 70
+                    JOIN mdl_course_modules cm ON ctx.instanceid = cm.id
+                    JOIN mdl_modules m ON cm.module = m.id AND m.name = 'forum'
+                    WHERE cm.course = f.course AND cm.instance = f.id
+                    AND gd.method = 'rubric'
+                ) THEN 'SÍ' ELSE 'NO' END AS retroalimentacion_rubrica
+            FROM mdl_forum f
+            LEFT JOIN mdl_forum_discussions fd ON f.id = fd.forum AND fd.name LIKE '%Momento%'
+            LEFT JOIN mdl_forum_posts fp ON fd.id = fp.discussion
+            LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'forum' AND gi.iteminstance = f.id
+            LEFT JOIN mdl_grade_grades gg ON gg.userid = fp.userid AND gg.itemid = gi.id
+            WHERE f.course IN (" . implode(',', $cursos_seleccionados) . ")
+              AND f.name != 'Avisos'
+              AND (fp.created BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
+                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR fp.created IS NULL)
+            GROUP BY fp.userid, f.course, f.id, gg.finalgrade, gg.timemodified, gg.feedback
+            UNION ALL
+            SELECT 
+                lg.userid,
+                l.course AS courseid,
+                l.id AS activity_id,
+                'Lección' AS activity_type,
+                COALESCE(gg.finalgrade, 0) AS nota,
+                TO_TIMESTAMP(gg.timemodified) AS fecha_calificacion,
+                CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END AS retroalimentada,
+                'NO' AS retroalimentacion_rubrica
+            FROM mdl_lesson l
+            LEFT JOIN mdl_lesson_grades lg ON lg.lessonid = l.id
+            LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'lesson' AND gi.iteminstance = l.id
+            LEFT JOIN mdl_grade_grades gg ON gg.userid = lg.userid AND gg.itemid = gi.id
+            WHERE l.course IN (" . implode(',', $cursos_seleccionados) . ")
+              AND (lg.completed BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
+                                    AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR lg.completed IS NULL)
+            GROUP BY lg.userid, l.course, l.id, gg.finalgrade, gg.timemodified, gg.feedback
+            UNION ALL
+            SELECT 
+                sub.userid,
+                a.course AS courseid,
+                a.id AS activity_id,
+                'Tarea' AS activity_type,
+                COALESCE(gg.finalgrade, 0) AS nota,
+                TO_TIMESTAMP(gg.timemodified) AS fecha_calificacion,
+                CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END AS retroalimentada,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM mdl_grading_definitions gd
+                    JOIN mdl_grading_areas ga ON gd.areaid = ga.id
+                    JOIN mdl_context ctx ON ga.contextid = ctx.id AND ctx.contextlevel = 70
+                    JOIN mdl_course_modules cm ON ctx.instanceid = cm.id
+                    JOIN mdl_modules m ON cm.module = m.id AND m.name = 'assign'
+                    WHERE cm.course = a.course AND cm.instance = a.id
+                    AND gd.method = 'rubric'
+                ) THEN 'SÍ' ELSE 'NO' END AS retroalimentacion_rubrica
+            FROM mdl_assign a
+            LEFT JOIN mdl_assign_submission sub ON sub.assignment = a.id
+            LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'assign' AND gi.iteminstance = a.id
+            LEFT JOIN mdl_grade_grades gg ON gg.userid = sub.userid AND gg.itemid = gi.id
+            WHERE a.course IN (" . implode(',', $cursos_seleccionados) . ")
+              AND (sub.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
+                                       AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR sub.timecreated IS NULL)
+            GROUP BY sub.userid, a.course, a.id, gg.finalgrade, gg.timemodified, gg.feedback
+            UNION ALL
+            SELECT 
+                qa.userid,
+                q.course AS courseid,
+                q.id AS activity_id,
+                'Quiz' AS activity_type,
+                COALESCE(gg.finalgrade, 0) AS nota,
+                TO_TIMESTAMP(gg.timemodified) AS fecha_calificacion,
+                CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END AS retroalimentada,
+                'NO' AS retroalimentacion_rubrica
+            FROM mdl_quiz q
+            LEFT JOIN mdl_quiz_attempts qa ON qa.quiz = q.id
+            LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'quiz' AND gi.iteminstance = q.id
+            LEFT JOIN mdl_grade_grades gg ON gg.userid = qa.userid AND gg.itemid = gi.id
+            WHERE q.course IN (" . implode(',', $cursos_seleccionados) . ")
+              AND (qa.timefinish BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
+                                     AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR qa.timefinish IS NULL)
+            GROUP BY qa.userid, q.course, q.id, gg.finalgrade, gg.timemodified, gg.feedback
+            UNION ALL
+            SELECT 
+                ge.userid,
+                g.course AS courseid,
+                g.id AS activity_id,
+                'Glosario' AS activity_type,
+                COALESCE(gg.finalgrade, 0) AS nota,
+                TO_TIMESTAMP(gg.timemodified) AS fecha_calificacion,
+                CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END AS retroalimentada,
+                'NO' AS retroalimentacion_rubrica
+            FROM mdl_glossary g
+            LEFT JOIN mdl_glossary_entries ge ON ge.glossaryid = g.id
+            LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'glossary' AND gi.iteminstance = g.id
+            LEFT JOIN mdl_grade_grades gg ON gg.userid = ge.userid AND gg.itemid = gi.id
+            WHERE g.course IN (" . implode(',', $cursos_seleccionados) . ")
+              AND (ge.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
+                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR ge.timecreated IS NULL)
+            GROUP BY ge.userid, g.course, g.id, gg.finalgrade, gg.timemodified, gg.feedback
+            UNION ALL
+            SELECT 
+                st.userid,
+                s.course AS courseid,
+                s.id AS activity_id,
+                'SCORM' AS activity_type,
+                COALESCE(gg.finalgrade, 0) AS nota,
+                TO_TIMESTAMP(gg.timemodified) AS fecha_calificacion,
+                CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END AS retroalimentada,
+                'NO' AS retroalimentacion_rubrica
+            FROM mdl_scorm s
+            LEFT JOIN mdl_scorm_scoes_track st ON st.scormid = s.id
+            LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'scorm' AND gi.iteminstance = s.id
+            LEFT JOIN mdl_grade_grades gg ON gg.userid = st.userid AND gg.itemid = gi.id
+            WHERE s.course IN (" . implode(',', $cursos_seleccionados) . ")
+              AND (st.timemodified BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
+                                       AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR st.timemodified IS NULL)
+            GROUP BY st.userid, s.course, s.id, gg.finalgrade, gg.timemodified, gg.feedback
+        )
+        SELECT 
+            u.username AS codigo,
+            u.firstname AS nombre,
+            u.lastname AS apellidos,
+            c.id AS id_curso,
+            c.fullname AS curso,
+            ua.activity_type AS tipo_actividad,
+            ua.activity_name AS nombre_actividad,
+            TO_CHAR(ua.fecha_apertura, 'YYYY-MM-DD HH24:MI:SS') AS fecha_apertura,
+            TO_CHAR(ua.fecha_cierre, 'YYYY-MM-DD HH24:MI:SS') AS fecha_cierre,
+            COALESCE(i.nota, 0) AS nota,
+            TO_CHAR(i.fecha_calificacion, 'YYYY-MM-DD HH24:MI:SS') AS fecha_calificacion,
+            COALESCE(i.retroalimentada, 'NO') AS retroalimentada,
+            COALESCE(i.retroalimentacion_rubrica, 'NO') AS retroalimentacion_rubrica
+        FROM user_activities ua
+        JOIN mdl_user u ON ua.userid = u.id
+        JOIN mdl_course c ON ua.courseid = c.id
+        JOIN mdl_role_assignments ra ON ra.userid = u.id 
+            AND ra.contextid = (SELECT id FROM mdl_context WHERE contextlevel = 50 AND instanceid = c.id)
+        JOIN mdl_role r ON ra.roleid = r.id
+        LEFT JOIN interacciones i ON ua.userid = i.userid 
+            AND ua.courseid = i.courseid 
+            AND ua.activity_id = i.activity_id 
+            AND ua.activity_type = i.activity_type
+        ORDER BY c.id, u.lastname, u.firstname, ua.activity_type, ua.activity_name";
 
-        // Consulta para obtener actividades del curso de referencia
-        $sql_actividades = "SELECT 
-                cm.id AS cmid,
-                CASE 
-                    WHEN m.name = 'forum' THEN 'Foro'
-                    WHEN m.name = 'quiz' THEN 'Quiz'
-                    WHEN m.name = 'assign' THEN 'Tarea'
-                    WHEN m.name = 'lesson' THEN 'Lección'
-                    WHEN m.name = 'glossary' THEN 'Glosario'
-                    WHEN m.name = 'scorm' THEN 'SCORM'
-                END AS activity_type,
-                CASE 
-                    WHEN m.name = 'forum' THEN f.name
-                    WHEN m.name = 'quiz' THEN q.name
-                    WHEN m.name = 'assign' THEN a.name
-                    WHEN m.name = 'lesson' THEN l.name
-                    WHEN m.name = 'glossary' THEN g.name
-                    WHEN m.name = 'scorm' THEN s.name
-                END AS activity_name,
-                CASE 
-                    WHEN m.name = 'forum' THEN 
-                        CASE WHEN f.duedate > 0 THEN TO_TIMESTAMP(f.duedate) ELSE TO_TIMESTAMP(c.startdate) END
-                    WHEN m.name = 'quiz' THEN 
-                        CASE WHEN q.timeopen > 0 THEN TO_TIMESTAMP(q.timeopen) ELSE TO_TIMESTAMP(c.startdate) END
-                    WHEN m.name = 'assign' THEN 
-                        CASE WHEN a.allowsubmissionsfromdate > 0 THEN TO_TIMESTAMP(a.allowsubmissionsfromdate) ELSE TO_TIMESTAMP(c.startdate) END
-                    WHEN m.name = 'lesson' THEN 
-                        CASE WHEN l.available > 0 THEN TO_TIMESTAMP(l.available) ELSE TO_TIMESTAMP(c.startdate) END
-                    WHEN m.name = 'glossary' THEN 
-                        CASE WHEN g.timecreated > 0 THEN TO_TIMESTAMP(g.timecreated) ELSE TO_TIMESTAMP(c.startdate) END
-                    WHEN m.name = 'scorm' THEN 
-                        CASE WHEN s.timeopen > 0 THEN TO_TIMESTAMP(s.timeopen) ELSE TO_TIMESTAMP(c.startdate) END
-                END AS fecha_apertura,
-                CASE 
-                    WHEN m.name = 'forum' THEN 
-                        CASE WHEN f.cutoffdate > 0 THEN TO_TIMESTAMP(f.cutoffdate) ELSE TO_TIMESTAMP(c.enddate) END
-                    WHEN m.name = 'quiz' THEN 
-                        CASE WHEN q.timeclose > 0 THEN TO_TIMESTAMP(q.timeclose) ELSE TO_TIMESTAMP(c.enddate) END
-                    WHEN m.name = 'assign' THEN 
-                        CASE WHEN a.duedate > 0 THEN TO_TIMESTAMP(a.duedate) ELSE TO_TIMESTAMP(c.enddate) END
-                    WHEN m.name = 'lesson' THEN 
-                        CASE WHEN l.deadline > 0 THEN TO_TIMESTAMP(l.deadline) ELSE TO_TIMESTAMP(c.enddate) END
-                    WHEN m.name = 'glossary' THEN 
-                        CASE WHEN g.timemodified > 0 AND g.timemodified != g.timecreated THEN TO_TIMESTAMP(g.timemodified) ELSE TO_TIMESTAMP(c.enddate) END
-                    WHEN m.name = 'scorm' THEN 
-                        CASE WHEN s.timeclose > 0 THEN TO_TIMESTAMP(s.timeclose) ELSE TO_TIMESTAMP(c.enddate) END
-                END AS fecha_cierre,
-                CASE 
-                    WHEN m.name = 'forum' THEN f.id
-                    WHEN m.name = 'quiz' THEN q.id
-                    WHEN m.name = 'assign' THEN a.id
-                    WHEN m.name = 'lesson' THEN l.id
-                    WHEN m.name = 'glossary' THEN g.id
-                    WHEN m.name = 'scorm' THEN s.id
-                END AS activity_id
-            FROM mdl_course_modules cm
-            JOIN mdl_modules m ON cm.module = m.id
-            JOIN mdl_course c ON cm.course = c.id
-            LEFT JOIN mdl_forum f ON m.name = 'forum' AND cm.instance = f.id
-            LEFT JOIN mdl_quiz q ON m.name = 'quiz' AND cm.instance = q.id
-            LEFT JOIN mdl_assign a ON m.name = 'assign' AND cm.instance = a.id
-            LEFT JOIN mdl_lesson l ON m.name = 'lesson' AND cm.instance = l.id
-            LEFT JOIN mdl_glossary g ON m.name = 'glossary' AND cm.instance = g.id
-            LEFT JOIN mdl_scorm s ON m.name = 'scorm' AND cm.instance = s.id
-            WHERE c.id = :curso_id
-              AND m.name IN ('forum', 'quiz', 'assign', 'lesson', 'glossary', 'scorm')
-              AND (m.name != 'forum' OR f.name != 'Avisos')
-            ORDER BY 
-                CASE 
-                    WHEN m.name = 'forum' THEN 1
-                    WHEN m.name = 'lesson' THEN 2
-                    WHEN m.name = 'assign' THEN 3
-                    WHEN m.name = 'quiz' THEN 4
-                    WHEN m.name = 'glossary' THEN 5
-                    WHEN m.name = 'scorm' THEN 6
-                END,
-                cm.id";
+    // Ejecutar la consulta
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $stmt = $pdo->prepare($sql_actividades);
-        $stmt->execute([':curso_id' => $curso_referencia]);
-        $actividades = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Crear el archivo Excel
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
 
-        // Organizar actividades por tipo
-        $foros = array_filter($actividades, function($a) { return $a['activity_type'] == 'Foro'; });
-        $lecciones = array_filter($actividades, function($a) { return $a['activity_type'] == 'Lección'; });
-        $tareas = array_filter($actividades, function($a) { return $a['activity_type'] == 'Tarea'; });
-        $quizzes = array_filter($actividades, function($a) { return $a['activity_type'] == 'Quiz'; });
-        $glosarios = array_filter($actividades, function($a) { return $a['activity_type'] == 'Glosario'; });
-        $scorms = array_filter($actividades, function($a) { return $a['activity_type'] == 'SCORM'; });
+    // Encabezados
+    $headers = [
+        'Código', 'Nombre', 'Apellidos', 'ID Curso', 'Curso', 
+        'Tipo Actividad', 'Nombre Actividad', 'Fecha Apertura', 'Fecha Cierre',
+        'Nota', 'Fecha Calificación', 'Retroalimentada', 'Retroalimentación Rúbrica'
+    ];
+    $sheet->fromArray($headers, null, 'A1');
 
-        // Configurar encabezados del Excel (7 columnas por actividad)
-        $headers = array_fill(0, 9, '');
-        $sub_headers = [
-            'codigo', 'nombre', 'apellidos', 'rol', 'correo', 'id_curso', 'curso',
-            'facultad', 'programa'
-        ];
-
-        foreach ([$foros, $lecciones, $tareas, $quizzes, $glosarios, $scorms] as $tipo_actividades) {
-            foreach ($tipo_actividades as $actividad) {
-                $headers[] = $actividad['activity_name'];
-                $headers = array_merge($headers, array_fill(0, 6, ''));
-                $sub_headers = array_merge($sub_headers, [
-                    'fecha_apertura',
-                    'fecha_cierre',
-                    'ultima_fecha_envio',
-                    'visitas',
-                    'numero_envios',
-                    'nota_final',
-                    'retroalimentada'
-                ]);
-            }
-        }
-
-        $spreadsheet = new Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->fromArray($headers, null, 'A1');
-        $sheet->fromArray($sub_headers, null, 'A2');
-        $row_number = 3;
-
-        foreach ($cursos as $curso_id) {
-            // CONSULTA PRINCIPAL ACTUALIZADA - CORREGIDA
-            $sql = "WITH 
-                user_info AS (
-                    SELECT 
-                        u.id AS userid,
-                        u.username,
-                        u.firstname,
-                        u.lastname,
-                        r.name AS rol,
-                        u.email,
-                        c.id AS courseid,
-                        c.fullname AS curso,
-                        u.institution,
-                        u.department
-                    FROM mdl_user u
-                    JOIN mdl_role_assignments ra ON ra.userid = u.id
-                    JOIN mdl_context mc ON ra.contextid = mc.id AND mc.contextlevel = 50
-                    JOIN mdl_course c ON mc.instanceid = c.id
-                    JOIN mdl_role r ON ra.roleid = r.id
-                    WHERE c.id = :curso_id
-                      AND u.username <> '12345678'
-                      AND ra.roleid IN ('5','9')
-                ),
-                actividades AS (
-                    SELECT 
-                        cm.id AS cmid,
-                        c.id AS courseid,
-                        CASE 
-                            WHEN m.name = 'forum' THEN 'Foro'
-                            WHEN m.name = 'quiz' THEN 'Quiz'
-                            WHEN m.name = 'assign' THEN 'Tarea'
-                            WHEN m.name = 'lesson' THEN 'Lección'
-                            WHEN m.name = 'glossary' THEN 'Glosario'
-                            WHEN m.name = 'scorm' THEN 'SCORM'
-                        END AS activity_type,
-                        CASE 
-                            WHEN m.name = 'forum' THEN f.name
-                            WHEN m.name = 'quiz' THEN q.name
-                            WHEN m.name = 'assign' THEN a.name
-                            WHEN m.name = 'lesson' THEN l.name
-                            WHEN m.name = 'glossary' THEN g.name
-                            WHEN m.name = 'scorm' THEN s.name
-                        END AS activity_name,
-                        CASE 
-                            WHEN m.name = 'forum' THEN f.id
-                            WHEN m.name = 'quiz' THEN q.id
-                            WHEN m.name = 'assign' THEN a.id
-                            WHEN m.name = 'lesson' THEN l.id
-                            WHEN m.name = 'glossary' THEN g.id
-                            WHEN m.name = 'scorm' THEN s.id
-                        END AS activity_id,
-                        CASE 
-                            WHEN m.name = 'forum' THEN 
-                                CASE WHEN f.duedate > 0 THEN TO_TIMESTAMP(f.duedate) ELSE TO_TIMESTAMP(c.startdate) END
-                            WHEN m.name = 'quiz' THEN 
-                                CASE WHEN q.timeopen > 0 THEN TO_TIMESTAMP(q.timeopen) ELSE TO_TIMESTAMP(c.startdate) END
-                            WHEN m.name = 'assign' THEN 
-                                CASE WHEN a.allowsubmissionsfromdate > 0 THEN TO_TIMESTAMP(a.allowsubmissionsfromdate) ELSE TO_TIMESTAMP(c.startdate) END
-                            WHEN m.name = 'lesson' THEN 
-                                CASE WHEN l.available > 0 THEN TO_TIMESTAMP(l.available) ELSE TO_TIMESTAMP(c.startdate) END
-                            WHEN m.name = 'glossary' THEN 
-                                CASE WHEN g.timecreated > 0 THEN TO_TIMESTAMP(g.timecreated) ELSE TO_TIMESTAMP(c.startdate) END
-                            WHEN m.name = 'scorm' THEN 
-                                CASE WHEN s.timeopen > 0 THEN TO_TIMESTAMP(s.timeopen) ELSE TO_TIMESTAMP(c.startdate) END
-                        END AS fecha_apertura,
-                        CASE 
-                            WHEN m.name = 'forum' THEN 
-                                CASE WHEN f.cutoffdate > 0 THEN TO_TIMESTAMP(f.cutoffdate) ELSE TO_TIMESTAMP(c.enddate) END
-                            WHEN m.name = 'quiz' THEN 
-                                CASE WHEN q.timeclose > 0 THEN TO_TIMESTAMP(q.timeclose) ELSE TO_TIMESTAMP(c.enddate) END
-                            WHEN m.name = 'assign' THEN 
-                                CASE WHEN a.duedate > 0 THEN TO_TIMESTAMP(a.duedate) ELSE TO_TIMESTAMP(c.enddate) END
-                            WHEN m.name = 'lesson' THEN 
-                                CASE WHEN l.deadline > 0 THEN TO_TIMESTAMP(l.deadline) ELSE TO_TIMESTAMP(c.enddate) END
-                            WHEN m.name = 'glossary' THEN 
-                                CASE WHEN g.timemodified > 0 AND g.timemodified != g.timecreated THEN TO_TIMESTAMP(g.timemodified) ELSE TO_TIMESTAMP(c.enddate) END
-                            WHEN m.name = 'scorm' THEN 
-                                CASE WHEN s.timeclose > 0 THEN TO_TIMESTAMP(s.timeclose) ELSE TO_TIMESTAMP(c.enddate) END
-                        END AS fecha_cierre
-                    FROM mdl_course_modules cm
-                    JOIN mdl_modules m ON cm.module = m.id
-                    JOIN mdl_course c ON cm.course = c.id
-                    LEFT JOIN mdl_forum f ON m.name = 'forum' AND cm.instance = f.id
-                    LEFT JOIN mdl_quiz q ON m.name = 'quiz' AND cm.instance = q.id
-                    LEFT JOIN mdl_assign a ON m.name = 'assign' AND cm.instance = a.id
-                    LEFT JOIN mdl_lesson l ON m.name = 'lesson' AND cm.instance = l.id
-                    LEFT JOIN mdl_glossary g ON m.name = 'glossary' AND cm.instance = g.id
-                    LEFT JOIN mdl_scorm s ON m.name = 'scorm' AND cm.instance = s.id
-                    WHERE c.id = :curso_id
-                      AND m.name IN ('forum', 'quiz', 'assign', 'lesson', 'glossary', 'scorm')
-                      AND (m.name != 'forum' OR f.name != 'Avisos')
-                ),
-                -- Interacciones con última fecha de envío y nota final
-                interacciones AS (
-                    -- Foros: última publicación y nota
-                    SELECT 
-                        fp.userid,
-                        f.course AS courseid,
-                        f.id AS activity_id,
-                        'Foro' AS activity_type,
-                        COUNT(DISTINCT fp.id) AS num_envios,
-                        MAX(fp.created) AS ultima_fecha_envio,
-                        (SELECT gg.finalgrade 
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = f.course 
-                           AND gi.itemmodule = 'forum' 
-                           AND gi.iteminstance = f.id 
-                           AND gg.userid = fp.userid) AS nota_final,
-                        (SELECT CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = f.course 
-                           AND gi.itemmodule = 'forum' 
-                           AND gi.iteminstance = f.id 
-                           AND gg.userid = fp.userid) AS retroalimentada
-                    FROM mdl_forum_posts fp
-                    JOIN mdl_forum_discussions fd ON fp.discussion = fd.id
-                    JOIN mdl_forum f ON fd.forum = f.id
-                    WHERE f.course = :curso_id
-                      AND (fp.created BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp))
-                    GROUP BY fp.userid, f.course, f.id
-                    
-                    UNION ALL
-                    
-                    -- Tareas: último envío y nota
-                    SELECT 
-                        sub.userid,
-                        a.course AS courseid,
-                        a.id AS activity_id,
-                        'Tarea' AS activity_type,
-                        COUNT(DISTINCT sub.id) AS num_envios,
-                        MAX(sub.timemodified) AS ultima_fecha_envio,
-                        (SELECT gg.finalgrade 
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = a.course 
-                           AND gi.itemmodule = 'assign' 
-                           AND gi.iteminstance = a.id 
-                           AND gg.userid = sub.userid) AS nota_final,
-                        (SELECT CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = a.course 
-                           AND gi.itemmodule = 'assign' 
-                           AND gi.iteminstance = a.id 
-                           AND gg.userid = sub.userid) AS retroalimentada
-                    FROM mdl_assign_submission sub
-                    JOIN mdl_assign a ON sub.assignment = a.id
-                    WHERE a.course = :curso_id
-                      AND (sub.timemodified BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                       AND EXTRACT(EPOCH FROM :fecha_fin::timestamp))
-                    GROUP BY sub.userid, a.course, a.id
-                    
-                    UNION ALL
-                    
-                    -- Quizzes: último intento y nota final desde mdl_quiz_grades
-                    SELECT 
-                        qg.userid,
-                        q.course AS courseid,
-                        q.id AS activity_id,
-                        'Quiz' AS activity_type,
-                        (SELECT COUNT(DISTINCT qa2.id)
-                         FROM mdl_quiz_attempts qa2
-                         WHERE qa2.quiz = q.id
-                           AND qa2.userid = qg.userid
-                           AND qa2.state = 'finished') AS num_envios,
-                        (SELECT MAX(qa3.timefinish)
-                         FROM mdl_quiz_attempts qa3
-                         WHERE qa3.quiz = q.id
-                           AND qa3.userid = qg.userid
-                           AND qa3.state = 'finished') AS ultima_fecha_envio,
-                        qg.grade AS nota_final,
-                        (SELECT CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = q.course 
-                           AND gi.itemmodule = 'quiz' 
-                           AND gi.iteminstance = q.id 
-                           AND gg.userid = qg.userid) AS retroalimentada
-                    FROM mdl_quiz_grades qg
-                    JOIN mdl_quiz q ON qg.quiz = q.id
-                    WHERE q.course = :curso_id
-                    GROUP BY qg.userid, q.course, q.id, qg.grade
-                    
-                    UNION ALL
-                    
-                    -- Lecciones: último completado y nota
-                    SELECT 
-                        lg.userid,
-                        l.course AS courseid,
-                        l.id AS activity_id,
-                        'Lección' AS activity_type,
-                        COUNT(DISTINCT lg.id) AS num_envios,
-                        MAX(lg.completed) AS ultima_fecha_envio,
-                        (SELECT gg.finalgrade 
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = l.course 
-                           AND gi.itemmodule = 'lesson' 
-                           AND gi.iteminstance = l.id 
-                           AND gg.userid = lg.userid) AS nota_final,
-                        (SELECT CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = l.course 
-                           AND gi.itemmodule = 'lesson' 
-                           AND gi.iteminstance = l.id 
-                           AND gg.userid = lg.userid) AS retroalimentada
-                    FROM mdl_lesson_grades lg
-                    JOIN mdl_lesson l ON lg.lessonid = l.id
-                    WHERE l.course = :curso_id
-                      AND (lg.completed BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                    AND EXTRACT(EPOCH FROM :fecha_fin::timestamp))
-                    GROUP BY lg.userid, l.course, l.id
-                    
-                    UNION ALL
-                    
-                    -- Glosarios: última entrada y nota
-                    SELECT 
-                        ge.userid,
-                        g.course AS courseid,
-                        g.id AS activity_id,
-                        'Glosario' AS activity_type,
-                        COUNT(DISTINCT ge.id) AS num_envios,
-                        MAX(ge.timecreated) AS ultima_fecha_envio,
-                        (SELECT gg.finalgrade 
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = g.course 
-                           AND gi.itemmodule = 'glossary' 
-                           AND gi.iteminstance = g.id 
-                           AND gg.userid = ge.userid) AS nota_final,
-                        (SELECT CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = g.course 
-                           AND gi.itemmodule = 'glossary' 
-                           AND gi.iteminstance = g.id 
-                           AND gg.userid = ge.userid) AS retroalimentada
-                    FROM mdl_glossary_entries ge
-                    JOIN mdl_glossary g ON ge.glossaryid = g.id
-                    WHERE g.course = :curso_id
-                      AND (ge.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp))
-                    GROUP BY ge.userid, g.course, g.id
-                    
-                    UNION ALL
-                    
-                    -- SCORM: último intento y nota
-                    SELECT 
-                        st.userid,
-                        s.course AS courseid,
-                        s.id AS activity_id,
-                        'SCORM' AS activity_type,
-                        COUNT(DISTINCT st.id) AS num_envios,
-                        MAX(st.timemodified) AS ultima_fecha_envio,
-                        (SELECT gg.finalgrade 
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = s.course 
-                           AND gi.itemmodule = 'scorm' 
-                           AND gi.iteminstance = s.id 
-                           AND gg.userid = st.userid) AS nota_final,
-                        (SELECT CASE WHEN gg.feedback IS NOT NULL AND gg.feedback != '' THEN 'SÍ' ELSE 'NO' END
-                         FROM mdl_grade_grades gg
-                         JOIN mdl_grade_items gi ON gg.itemid = gi.id
-                         WHERE gi.courseid = s.course 
-                           AND gi.itemmodule = 'scorm' 
-                           AND gi.iteminstance = s.id 
-                           AND gg.userid = st.userid) AS retroalimentada
-                    FROM mdl_scorm_scoes_track st
-                    JOIN mdl_scorm s ON st.scormid = s.id
-                    WHERE s.course = :curso_id
-                      AND (st.timemodified BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                       AND EXTRACT(EPOCH FROM :fecha_fin::timestamp))
-                    GROUP BY st.userid, s.course, s.id
-                ),
-                visitas AS (
-                    SELECT 
-                        log.userid,
-                        log.courseid,
-                        log.objectid AS activity_id,
-                        CASE 
-                            WHEN log.component = 'mod_forum' THEN 'Foro'
-                            WHEN log.component = 'mod_quiz' THEN 'Quiz'
-                            WHEN log.component = 'mod_assign' THEN 'Tarea'
-                            WHEN log.component = 'mod_lesson' THEN 'Lección'
-                            WHEN log.component = 'mod_glossary' THEN 'Glosario'
-                            WHEN log.component = 'mod_scorm' THEN 'SCORM'
-                        END AS activity_type,
-                        COUNT(*) AS num_visitas
-                    FROM mdl_logstore_standard_log log
-                    WHERE log.action = 'viewed'
-                      AND log.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                         AND EXTRACT(EPOCH FROM :fecha_fin::timestamp)
-                      AND log.courseid = :curso_id
-                      AND log.component IN ('mod_forum', 'mod_lesson', 'mod_assign', 'mod_quiz', 'mod_glossary', 'mod_scorm')
-                    GROUP BY log.userid, log.courseid, log.objectid, log.component
-                )
-                SELECT 
-                    ui.username AS codigo,
-                    ui.firstname AS nombre,
-                    ui.lastname AS apellidos,
-                    ui.rol,
-                    ui.email AS correo,
-                    ui.courseid AS id_curso,
-                    ui.curso,
-                    ui.institution AS facultad,
-                    ui.department AS programa,
-                    a.activity_type,
-                    a.activity_name,
-                    TO_CHAR(a.fecha_apertura, 'YYYY-MM-DD HH24:MI:SS') AS fecha_apertura,
-                    TO_CHAR(a.fecha_cierre, 'YYYY-MM-DD HH24:MI:SS') AS fecha_cierre,
-                    TO_CHAR(TO_TIMESTAMP(i.ultima_fecha_envio), 'YYYY-MM-DD HH24:MI:SS') AS ultima_fecha_envio,
-                    COALESCE(v.num_visitas, 0) AS visitas,
-                    COALESCE(i.num_envios, 0) AS num_envios,
-                    COALESCE(i.nota_final, 0) AS nota_final,
-                    COALESCE(i.retroalimentada, 'NO') AS retroalimentada
-                FROM user_info ui
-                CROSS JOIN actividades a
-                LEFT JOIN interacciones i ON ui.userid = i.userid 
-                    AND ui.courseid = i.courseid 
-                    AND a.activity_id = i.activity_id 
-                    AND a.activity_type = i.activity_type
-                LEFT JOIN visitas v ON ui.userid = v.userid 
-                    AND ui.courseid = v.courseid 
-                    AND a.activity_id = v.activity_id 
-                    AND a.activity_type = v.activity_type
-                ORDER BY ui.lastname, ui.firstname, 
-                    CASE 
-                        WHEN a.activity_type = 'Foro' THEN 1
-                        WHEN a.activity_type = 'Lección' THEN 2
-                        WHEN a.activity_type = 'Tarea' THEN 3
-                        WHEN a.activity_type = 'Quiz' THEN 4
-                        WHEN a.activity_type = 'Glosario' THEN 5
-                        WHEN a.activity_type = 'SCORM' THEN 6
-                    END,
-                    a.activity_name";
-
-            $params = [
-                ':curso_id' => $curso_id,
-                ':fecha_inicio' => $fecha_inicio->format('Y-m-d H:i:s'),
-                ':fecha_fin' => $fecha_fin->format('Y-m-d H:i:s')
-            ];
-
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
-            $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            // Organizar datos para el Excel
-            $datos_usuarios = [];
-            foreach ($resultados as $row) {
-                $codigo = $row['codigo'];
-                if (!isset($datos_usuarios[$codigo])) {
-                    $datos_usuarios[$codigo] = [
-                        'info' => [
-                            $row['codigo'],
-                            $row['nombre'],
-                            $row['apellidos'],
-                            $row['rol'],
-                            $row['correo'],
-                            $row['id_curso'],
-                            $row['curso'],
-                            $row['facultad'],
-                            $row['programa']
-                        ],
-                        'actividades' => []
-                    ];
-                }
-
-                $datos_usuarios[$codigo]['actividades'][$row['activity_type']][$row['activity_name']] = [
-                    'fecha_apertura' => $row['fecha_apertura'],
-                    'fecha_cierre' => $row['fecha_cierre'],
-                    'ultima_fecha_envio' => $row['ultima_fecha_envio'],
-                    'visitas' => $row['visitas'],
-                    'num_envios' => $row['num_envios'],
-                    'nota_final' => $row['nota_final'],
-                    'retroalimentada' => $row['retroalimentada']
-                ];
-            }
-
-            // Llenar la hoja de cálculo
-            foreach ($datos_usuarios as $usuario) {
-                $row_data = $usuario['info'];
-
-                // Procesar cada tipo de actividad
-                foreach ([$foros, $lecciones, $tareas, $quizzes, $glosarios, $scorms] as $tipo_actividades) {
-                    foreach ($tipo_actividades as $actividad) {
-                        $actividad_data = $usuario['actividades'][$actividad['activity_type']][$actividad['activity_name']] ?? null;
-                        
-                        $row_data[] = $actividad['fecha_apertura'];
-                        $row_data[] = $actividad['fecha_cierre'];
-                        $row_data[] = $actividad_data ? $actividad_data['ultima_fecha_envio'] : '';
-                        $row_data[] = $actividad_data ? $actividad_data['visitas'] : '';
-                        $row_data[] = $actividad_data ? $actividad_data['num_envios'] : '';
-                        $row_data[] = $actividad_data ? $actividad_data['nota_final'] : '';
-                        $row_data[] = $actividad_data ? $actividad_data['retroalimentada'] : 'NO';
-                    }
-                }
-
-                $sheet->fromArray($row_data, null, 'A' . $row_number);
-                $row_number++;
-            }
-        }
-
-        // Guardar archivo Excel
-        $nombre_archivo = "reporte_actividades_{$nombre_grupo}.xlsx";
-        $ruta_archivo = "$temp_dir/$nombre_archivo";
-        $writer = new Xlsx($spreadsheet);
-        $writer->save($ruta_archivo);
-        $archivos_excel[] = $ruta_archivo;
+    // Llenar datos
+    $row = 2;
+    foreach ($resultados as $data) {
+        $sheet->fromArray($data, null, 'A' . $row);
+        $row++;
     }
 
-    // Crear archivo ZIP con todos los reportes
+    // Guardar el archivo Excel
+    $nombre_archivo = "reporte_actividades_" . date('Y-m-d') . ".xlsx";
+    $ruta_archivo = "$temp_dir/$nombre_archivo";
+    $writer = new Xlsx($spreadsheet);
+    $writer->save($ruta_archivo);
+    $archivos_excel[] = $ruta_archivo;
+
+    // Crear archivo ZIP (manteniendo la estructura original)
     $zip = new ZipArchive();
-    $zip_file = "$temp_dir/actividades_regencia.zip";
-    if ($zip->open($zip_file, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
-        throw new Exception("No se pudo crear el archivo ZIP: $zip_file");
+    $zip_file = "$temp_dir/actividades_pregrado.zip";
+    if ($zip->open($zip_file, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
+        foreach ($archivos_excel as $archivo) {
+            $zip->addFile($archivo, basename($archivo));
+        }
+        $zip->close();
+    } else {
+        throw new Exception("No se pudo crear el archivo ZIP");
     }
 
-    foreach ($archivos_excel as $archivo) {
-        $zip->addFile($archivo, basename($archivo));
-    }
-    $zip->close();
-
-    // Enviar correo con el ZIP adjunto
-    $mail = new PHPMailer(true);
-    $mail->setFrom('noreply@utp.edu.co', 'Reporte Moodle');
+    // Enviar correo con Postfix 
+    $mail = new PHPMailer();
+    $mail->isSendmail(); // Usar sendmail/postfix
+    
+    $mail->setFrom('noreply@utp.edu.co', 'Reportes Moodle');
     foreach ($correo_destino as $correo) {
         $mail->addAddress($correo);
     }
-    $mail->Subject = "Reporte de actividades Regencia en Farmacia - " . $hoy->format('Y-m-d');
-    $mail->Body = "Cordial Saludo,\n\nAdjunto el reporte de actividades Regencia en Farmacia en un archivo ZIP que contiene los reportes de todos los grupos de cursos.\n\nSaludos,\nSistema de Reportes Moodle";
-    $mail->addAttachment($zip_file, 'actividades_regencia.zip');
+    $mail->Subject = "Reporte de actividades programa de regencia cohorte 2 Semestre 1 - " . $hoy->format('Y-m-d');
+    $mail->Body = "Cordial Saludo,\n\nAdjunto el reporte de actividades programa de regencia cohorte 2 Semestre 1 en un archivo ZIP.";
+    $mail->addAttachment($zip_file, 'actividades_regencia_c2_s1.zip');
     
     if (!$mail->send()) {
         throw new Exception("Error al enviar el correo: " . $mail->ErrorInfo);
     }
 
     // Notificar éxito
-    mail($correo_notificacion, "Estado Reporte", "El reporte de actividades Regencia en Farmacia fue enviado correctamente.");
+    mail($correo_notificacion, "Estado Reporte", "El reporte de actividades programa de regencia cohorte 2 Semestre 1 fue enviado correctamente.");
 
     // Limpiar archivos temporales
     foreach ($archivos_excel as $archivo) {
@@ -621,27 +371,20 @@ try {
 
 } catch (Exception $e) {
     // Manejo de errores
-    error_log("Error en actividadesRegencia1.php: " . $e->getMessage());
-    
-    // Intentar limpiar archivos temporales
     if (isset($archivos_excel)) {
         foreach ($archivos_excel as $archivo) {
             if (file_exists($archivo)) {
-                @unlink($archivo);
+                unlink($archivo);
             }
         }
     }
     if (isset($zip_file) && file_exists($zip_file)) {
-        @unlink($zip_file);
+        unlink($zip_file);
     }
     if (isset($temp_dir) && is_dir($temp_dir)) {
-        @rmdir($temp_dir);
+        rmdir($temp_dir);
     }
     
-    // Notificar error
-    mail($correo_notificacion, 'Error Reporte', 'Error en el script actividadesRegencia1.php: ' . $e->getMessage());
-    
-    // Salir con código de error
-    exit(1);
+    mail($correo_notificacion, 'Error Reporte', 'Error: ' . $e->getMessage());
+    die('Error: ' . $e->getMessage());
 }
-?>
