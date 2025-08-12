@@ -8,6 +8,7 @@ use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 
 // Configuración de correos
 $correo_destino = ['soporteunivirtual@utp.edu.co', 'univirtual-utp@utp.edu.co'];
@@ -28,12 +29,16 @@ $fecha_fin = $lunes->format('Y-m-d 23:59:59');
 
 $cursos = ['786','583','804','596','820','790','821','819','789','580','799','616','617','797','798','842','844','621','805','584','581','802','619','627','800','801','618','588','815','589','590','594','595','787','788','605','607','793','573','791','606','792','608','609','795','611','794','610','586','814','623','622','624','733','574','604','796','576','612','577','614','830','615','783','579','784','785','591','587','810','625','582','803','620','592','816','817','593','740','822','823','824','825','741','826','827','828'];
 
-// Función para reemplazar valores nulos o vacíos con 0
-function replaceEmptyWithZero($value) {
-    if (is_array($value)) {
-        return array_map('replaceEmptyWithZero', $value);
+// Función mejorada para reemplazar valores nulos o vacíos con 0
+function sanitizeData(&$data) {
+    foreach ($data as &$row) {
+        foreach ($row as &$value) {
+            if ($value === null || $value === '') {
+                $value = 0;
+            }
+        }
     }
-    return ($value === null || $value === '') ? 0 : $value;
+    return $data;
 }
 
 try {
@@ -117,16 +122,16 @@ try {
       c.fullname AS curso,
       mr.name AS rol,
       mr.id AS rol_id,
-      ucf.idprograma,
-      ucf.idfacultad,
-      ci.idcodigo,
-      ci.grupo,
-      ci.periodo,
-      ci.nivel,
-      ucf.edad,
-      ucf.genero,
-      ucf.celular,
-      ucf.estrato,
+      COALESCE(ucf.idprograma, '0') AS idprograma,
+      COALESCE(ucf.idfacultad, '0') AS idfacultad,
+      COALESCE(ci.idcodigo, '0') AS idcodigo,
+      COALESCE(ci.grupo, '0') AS grupo,
+      COALESCE(ci.periodo, '0') AS periodo,
+      COALESCE(ci.nivel, '0') AS nivel,
+      COALESCE(ucf.edad, '0') AS edad,
+      COALESCE(ucf.genero, '0') AS genero,
+      COALESCE(ucf.celular, '0') AS celular,
+      COALESCE(ucf.estrato, '0') AS estrato,
       ad.fecha,
       CASE WHEN EXISTS (
         SELECT 1
@@ -138,13 +143,13 @@ try {
           AND CAST(to_timestamp(mlsl.timecreated) AS DATE) = ad.fecha
       ) THEN 1 ELSE 0 END AS ingreso_dia,
       COALESCE(ucd.total_ingresos, 0) AS total_ingresos,
-      (SELECT CONCAT(u2.idnumber) AS Teacher
+      COALESCE((SELECT CONCAT(u2.idnumber) 
        FROM mdl_role_assignments AS ra
        JOIN mdl_context AS ctx ON ra.contextid = ctx.id
        JOIN mdl_user AS u2 ON u2.id = ra.userid
        WHERE ra.roleid = 3
          AND ctx.instanceid = c.id
-       LIMIT 1) AS nrodoc
+       LIMIT 1), '0') AS nrodoc
     FROM mdl_user u
     CROSS JOIN AllDays ad
     LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
@@ -215,14 +220,14 @@ try {
       u.email AS correo,
       c.fullname AS curso,
       mr.name AS rol,
-      ucf.idprograma,
-      u.department as programa,
-      ucf.idfacultad,
-      u.institution as facultad,
-      ucf.edad,
-      ucf.genero,
-      ucf.celular,
-      ucf.estrato,
+      COALESCE(ucf.idprograma, '0') AS idprograma,
+      COALESCE(u.department, '0') as programa,
+      COALESCE(ucf.idfacultad, '0') AS idfacultad,
+      COALESCE(u.institution, '0') as facultad,
+      COALESCE(ucf.edad, '0') AS edad,
+      COALESCE(ucf.genero, '0') AS genero,
+      COALESCE(ucf.celular, '0') AS celular,
+      COALESCE(ucf.estrato, '0') AS estrato,
       COALESCE(ucd.total_ingresos, 0) AS total_ingresos
     FROM mdl_user u
     LEFT JOIN mdl_role_assignments mra ON mra.userid = u.id
@@ -245,7 +250,7 @@ try {
         ':fecha_fin' => $fecha_fin
     ] + $cursos_params;
 
-    // Función para crear una hoja en el Excel
+    // Función para crear una hoja en el Excel con manejo de valores nulos
     function createSheet($spreadsheet, $data, $title, $sheetIndex = 0) {
         if ($sheetIndex > 0) {
             $sheet = $spreadsheet->createSheet();
@@ -253,19 +258,36 @@ try {
             $sheet = $spreadsheet->getActiveSheet();
         }
         
-        $sheet->setTitle(substr($title, 0, 31)); // Los títulos de hoja en Excel tienen un límite de 31 caracteres
+        $sheet->setTitle(substr($title, 0, 31));
         
         if (!empty($data)) {
             // Escribir encabezados
             $headers = array_keys($data[0]);
             $sheet->fromArray($headers, null, 'A1');
             
-            // Escribir datos
-            $rowData = [];
+            // Escribir datos con manejo explícito de tipos
+            $rowNumber = 2;
             foreach ($data as $row) {
-                $rowData[] = array_values($row);
+                $colNumber = 1;
+                foreach ($row as $value) {
+                    $cell = $sheet->getCellByColumnAndRow($colNumber, $rowNumber);
+                    
+                    // Convertir valores nulos o vacíos a 0
+                    if ($value === null || $value === '') {
+                        $value = 0;
+                    }
+                    
+                    // Establecer el valor con el tipo correcto
+                    if (is_numeric($value)) {
+                        $cell->setValueExplicit($value, DataType::TYPE_NUMERIC);
+                    } else {
+                        $cell->setValueExplicit($value, DataType::TYPE_STRING);
+                    }
+                    
+                    $colNumber++;
+                }
+                $rowNumber++;
             }
-            $sheet->fromArray($rowData, null, 'A2');
         }
         
         return $sheet;
@@ -275,13 +297,13 @@ try {
     $stmt_detalle = $pdo->prepare($sql_detalle);
     $stmt_detalle->execute($params);
     $resultados_detalle = $stmt_detalle->fetchAll(PDO::FETCH_ASSOC);
-    $resultados_detalle = array_map('replaceEmptyWithZero', $resultados_detalle);
+    $resultados_detalle = sanitizeData($resultados_detalle);
 
     // Procesar consulta resumen
     $stmt_resumen = $pdo->prepare($sql_resumen);
     $stmt_resumen->execute($params);
     $resultados_resumen = $stmt_resumen->fetchAll(PDO::FETCH_ASSOC);
-    $resultados_resumen = array_map('replaceEmptyWithZero', $resultados_resumen);
+    $resultados_resumen = sanitizeData($resultados_resumen);
 
     // Filtrar resultados
     $estudiantes_detalle = array_values(array_filter($resultados_detalle, function($fila) {
@@ -293,11 +315,11 @@ try {
     }));
 
     $estudiantes_resumen = array_values(array_filter($resultados_resumen, function($fila) {
-        return in_array($fila['rol'], ['Estudiante', 'Student']); // Ajustar según los nombres de roles en tu sistema
+        return in_array($fila['rol'], ['Estudiante', 'Student']);
     }));
     
     $profesores_resumen = array_values(array_filter($resultados_resumen, function($fila) {
-        return $fila['rol'] == 'Profesor'; // Ajustar según el nombre de rol en tu sistema
+        return $fila['rol'] == 'Profesor';
     }));
 
     // Generar archivos Excel con dos hojas
