@@ -59,7 +59,7 @@ try {
     ];
     $sheet->fromArray($headers, null, 'A1');
 
-    // Consulta SQL
+    // Consulta SQL (usando solo placeholders posicionales)
     $sql = "
         WITH 
         all_users AS (
@@ -177,8 +177,8 @@ try {
             LEFT JOIN mdl_grade_grades gg ON gg.userid = fp.userid AND gg.itemid = gi.id
             WHERE f.course IN (" . implode(',', array_fill(0, count($cursos), '?')) . ")
               AND f.name != 'Avisos'
-              AND (fp.created BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                  AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR fp.created IS NULL)
+              AND (fp.created BETWEEN EXTRACT(EPOCH FROM ?::timestamp) 
+                                  AND EXTRACT(EPOCH FROM ?::timestamp) OR fp.created IS NULL)
             GROUP BY fp.userid, f.course, f.id, gg.finalgrade, gg.timemodified, gg.feedback, gg.itemid, gg.usermodified
             UNION ALL
             SELECT 
@@ -209,8 +209,8 @@ try {
             LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'lesson' AND gi.iteminstance = l.id
             LEFT JOIN mdl_grade_grades gg ON gg.userid = lg.userid AND gg.itemid = gi.id
             WHERE l.course IN (" . implode(',', array_fill(0, count($cursos), '?')) . ")
-              AND (lg.completed BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                    AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR lg.completed IS NULL)
+              AND (lg.completed BETWEEN EXTRACT(EPOCH FROM ?::timestamp) 
+                                    AND EXTRACT(EPOCH FROM ?::timestamp) OR lg.completed IS NULL)
             GROUP BY lg.userid, l.course, l.id, gg.finalgrade, gg.timemodified, gg.feedback, gg.itemid, gg.usermodified
             UNION ALL
             SELECT 
@@ -241,8 +241,8 @@ try {
             LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'assign' AND gi.iteminstance = a.id
             LEFT JOIN mdl_grade_grades gg ON gg.userid = sub.userid AND gg.itemid = gi.id
             WHERE a.course IN (" . implode(',', array_fill(0, count($cursos), '?')) . ")
-              AND (sub.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR sub.timecreated IS NULL)
+              AND (sub.timecreated BETWEEN EXTRACT(EPOCH FROM ?::timestamp) 
+                                      AND EXTRACT(EPOCH FROM ?::timestamp) OR sub.timecreated IS NULL)
             GROUP BY sub.userid, a.course, a.id, gg.finalgrade, gg.timemodified, gg.feedback, gg.itemid, gg.usermodified
             UNION ALL
             SELECT 
@@ -259,8 +259,8 @@ try {
             LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'quiz' AND gi.iteminstance = q.id
             LEFT JOIN mdl_grade_grades gg ON gg.userid = qa.userid AND gg.itemid = gi.id
             WHERE q.course IN (" . implode(',', array_fill(0, count($cursos), '?')) . ")
-              AND (qa.timefinish BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                    AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR qa.timefinish IS NULL)
+              AND (qa.timefinish BETWEEN EXTRACT(EPOCH FROM ?::timestamp) 
+                                    AND EXTRACT(EPOCH FROM ?::timestamp) OR qa.timefinish IS NULL)
             GROUP BY qa.userid, q.course, q.id, gg.finalgrade, gg.timemodified, gg.feedback
             UNION ALL
             SELECT 
@@ -277,8 +277,8 @@ try {
             LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'glossary' AND gi.iteminstance = g.id
             LEFT JOIN mdl_grade_grades gg ON gg.userid = ge.userid AND gg.itemid = gi.id
             WHERE g.course IN (" . implode(',', array_fill(0, count($cursos), '?')) . ")
-              AND (ge.timecreated BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                     AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR ge.timecreated IS NULL)
+              AND (ge.timecreated BETWEEN EXTRACT(EPOCH FROM ?::timestamp) 
+                                     AND EXTRACT(EPOCH FROM ?::timestamp) OR ge.timecreated IS NULL)
             GROUP BY ge.userid, g.course, g.id, gg.finalgrade, gg.timemodified, gg.feedback
             UNION ALL
             SELECT 
@@ -295,8 +295,8 @@ try {
             LEFT JOIN mdl_grade_items gi ON gi.itemmodule = 'scorm' AND gi.iteminstance = s.id
             LEFT JOIN mdl_grade_grades gg ON gg.userid = st.userid AND gg.itemid = gi.id
             WHERE s.course IN (" . implode(',', array_fill(0, count($cursos), '?')) . ")
-              AND (st.timemodified BETWEEN EXTRACT(EPOCH FROM :fecha_inicio::timestamp) 
-                                      AND EXTRACT(EPOCH FROM :fecha_fin::timestamp) OR st.timemodified IS NULL)
+              AND (st.timemodified BETWEEN EXTRACT(EPOCH FROM ?::timestamp) 
+                                      AND EXTRACT(EPOCH FROM ?::timestamp) OR st.timemodified IS NULL)
             GROUP BY st.userid, s.course, s.id, gg.finalgrade, gg.timemodified, gg.feedback
         )
         SELECT 
@@ -328,11 +328,15 @@ try {
 
     // Preparar parámetros para la consulta
     $params = [];
-    for ($i = 0; $i < 7; $i++) {
+    // Añadir los cursos para cada subconsulta (8 subconsultas: 1 para all_users, 6 para all_activities, 6 para interacciones)
+    for ($i = 0; $i < 13; $i++) {
         $params = array_merge($params, $cursos);
     }
-    $params['fecha_inicio'] = $fecha_inicio->format('Y-m-d H:i:s');
-    $params['fecha_fin'] = $fecha_fin->format('Y-m-d H:i:s');
+    // Añadir las fechas para cada tipo de actividad en interacciones (6 tipos * 2 fechas)
+    for ($i = 0; $i < 6; $i++) {
+        $params[] = $fecha_inicio->format('Y-m-d H:i:s');
+        $params[] = $fecha_fin->format('Y-m-d H:i:s');
+    }
 
     // Ejecutar consulta
     $stmt = $pdo->prepare($sql);
