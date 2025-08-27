@@ -145,8 +145,8 @@ function enviarCorreoCancelacionDocente($user, $curso) {
         JOIN {context} ctx ON ctx.id = ra.contextid
         WHERE ctx.instanceid = ? AND ra.roleid = 3", [$curso->id]);
     
-    $subject = "Estudiante cancelado - {$curso->fullname}";
-    $message = "El estudiante {$user->firstname} {$user->lastname} ha sido cancelado.\n\n".
+    $subject = "Solicitud de Cancelacion - {$curso->fullname}";
+    $message = "El estudiante {$user->firstname} {$user->lastname} ha solicitado cancelacion ante Registro y Control.\n\n".
                "Atentamente,\nUnivirtual UTP";
     
     foreach ($profesores as $profesor) {
