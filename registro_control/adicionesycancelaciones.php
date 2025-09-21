@@ -305,6 +305,40 @@ function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
     $resumen[] = "Cambio de grupo reportado - $username en $idgrupo";
     return true;
 }
+function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
+    $subject = ($modoPrueba ? "[PRUEBA] " : "")."Reporte de Adiciones/Cancelaciones - ".date('Y-m-d H:i:s');
+    $message = "Reporte de ejecución ".($modoPrueba ? "en modo prueba" : "en producción")."\n\n".
+               "Total registros: {$resultados['total']}\n".
+               "Cancelaciones: {$resultados['cancelaciones']}\n".
+               "Adiciones: {$resultados['adiciones']}\n".
+               "Cambios de grupo: {$resultados['cambios_grupo']}\n".
+               "Errores: {$resultados['errores']}\n\n".
+               "Detalles:\n".implode("\n", $resumen);
+
+    // archivo CSV temporal
+    $csvFileName = tempnam(sys_get_temp_dir(), 'reporte_').'.csv';
+    $csvFile = fopen($csvFileName, 'w');
+
+    // encabezados
+    fputcsv($csvFile, [
+        'Tipo Operación', 'Username', 'Nombre Completo', 'Email',
+        'ID Grupo', 'Asignatura', 'Fecha Oracle', 'Fecha Proceso', 'Estado'
+    ], ';');
+
+    // recorrer los detalles
+    foreach ($resumen as $linea) {
+        fputcsv($csvFile, [$linea], ';');
+    }
+
+    fclose($csvFile);
+
+    // mandar correo con adjunto
+    mail(EMAIL_SOPORTE, $subject, $message, "From: ".FROM_EMAIL);
+    mail(EMAIL_SOPORTE_ADICIONAL, $subject, $message, "From: ".FROM_EMAIL);
+
+    unlink($csvFileName);
+}
+
 
 // =============================================================================
 // EJECUCIÓN PRINCIPAL
@@ -358,7 +392,13 @@ try {
         }
     }
 
-    // Aquí puedes implementar enviarReporteFinal si lo necesitas
+        // Enviar reporte final al terminar
+    enviarReporteFinal($resultados, $modoPrueba, $resumen);
+
+    // Guardar última fecha procesada
+    file_put_contents(LAST_RUN_FILE, date('Y-m-d H:i:s'));
+    echo "Fecha de última ejecución registrada: ".date('Y-m-d H:i:s')."\n";
+
 
     // Guardar última fecha procesada
     file_put_contents(LAST_RUN_FILE, date('Y-m-d H:i:s'));
