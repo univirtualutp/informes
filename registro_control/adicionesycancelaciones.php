@@ -29,6 +29,7 @@ global $DB, $CFG;
 // =============================================================================
 
 define('EMAIL_SOPORTE', 'juapabgonzalez@utp.edu.co');
+define('EMAIL_SOPORTE_RAMIREZ', 's.ramirez9@utp.edu.co');
 define('EMAIL_SOPORTE_ADICIONAL', 'univirtual@utp.edu.co');
 define('FROM_EMAIL', 'noreply@utp.edu.co');
 define('REGISTRO_PROCESADOS_FILE', __DIR__.'/procesados.log');
@@ -534,6 +535,7 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     // enviar correo con adjunto a los destinatarios definidos
     enviarCorreoConAdjunto(EMAIL_SOPORTE, $subject, $message, $csvFileName, 'reporte.csv');
     enviarCorreoConAdjunto(EMAIL_SOPORTE_ADICIONAL, $subject, $message, $csvFileName, 'reporte.csv');
+    enviarCorreoConAdjunto(EMAIL_SOPORTE_RAMIREZ, $subject, $message, $csvFileName, 'reporte.csv'); // 👈 nuevo
 
     // borrar el archivo temporal
     unlink($csvFileName);
