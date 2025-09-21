@@ -306,6 +306,11 @@ function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
     return true;
 }
 function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
+    // Si no hubo registros, añadimos una línea mínima al resumen
+    if (empty($resumen)) {
+        $resumen[] = "No se encontraron registros en este rango.";
+    }
+
     $subject = ($modoPrueba ? "[PRUEBA] " : "")."Reporte de Adiciones/Cancelaciones - ".date('Y-m-d H:i:s');
     $message = "Reporte de ejecución ".($modoPrueba ? "en modo prueba" : "en producción")."\n\n".
                "Total registros: {$resultados['total']}\n".
@@ -319,28 +324,28 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     $csvFileName = tempnam(sys_get_temp_dir(), 'reporte_').'.csv';
     $csvFile = fopen($csvFileName, 'w');
 
-    // encabezados
+    // encabezados CSV
     fputcsv($csvFile, [
         'Tipo Operación', 'Username', 'Nombre Completo', 'Email',
         'ID Grupo', 'Asignatura', 'Fecha Oracle', 'Fecha Proceso', 'Estado'
     ], ';');
 
-    // recorrer los detalles
+    // recorrer los detalles del resumen
     foreach ($resumen as $linea) {
+        // cada línea se guarda como fila en el CSV en una sola columna
         fputcsv($csvFile, [$linea], ';');
     }
 
     fclose($csvFile);
 
-    // mandar correo con adjunto
-    mail(EMAIL_SOPORTE, $subject, $message, "From: ".FROM_EMAIL);
-    mail(EMAIL_SOPORTE_ADICIONAL, $subject, $message, "From: ".FROM_EMAIL);
+    // enviar correo con adjunto a los destinatarios definidos
+    enviarCorreoConAdjunto(EMAIL_SOPORTE, $subject, $message, $csvFileName, 'reporte.csv');
+    enviarCorreoConAdjunto(EMAIL_SOPORTE_ADICIONAL, $subject, $message, $csvFileName, 'reporte.csv');
 
+    // borrar el archivo temporal
     unlink($csvFileName);
 }
-
-
-// =============================================================================
+//===========================================================
 // EJECUCIÓN PRINCIPAL
 // =============================================================================
 
