@@ -202,24 +202,68 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
     $username = $registro['NUMERODOCUMENTO'];
     $fechaOracle = $registro['FECHACREACION'];
 
+    // Evitar reprocesar
     if (yaProcesado($idgrupo, $username, TIPO_CANCELACION, $fechaOracle)) {
+        $resumen[] = [
+            'tipo' => 'Cancelación',
+            'username' => $username,
+            'nombre' => '-',
+            'email' => '-',
+            'idgrupo' => $idgrupo,
+            'curso' => '-',
+            'fecha_oracle' => $fechaOracle,
+            'fecha_proceso' => date('Y-m-d H:i:s'),
+            'estado' => 'Ya procesado'
+        ];
         return false;
     }
 
+    // Buscar curso por IDGRUPO en summary
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname');
-    if (!$curso) return false;
+    if (!$curso) {
+        $resumen[] = [
+            'tipo' => 'Cancelación',
+            'username' => $username,
+            'nombre' => '-',
+            'email' => '-',
+            'idgrupo' => $idgrupo,
+            'curso' => '(Curso no encontrado)',
+            'fecha_oracle' => $fechaOracle,
+            'fecha_proceso' => date('Y-m-d H:i:s'),
+            'estado' => 'Error: curso no encontrado'
+        ];
+        return false;
+    }
 
+    // Buscar usuario por documento
     $user = $DB->get_record('user', ['username' => $username]);
-    if (!$user) return false;
+    if (!$user) {
+        $resumen[] = [
+            'tipo' => 'Cancelación',
+            'username' => $username,
+            'nombre' => '(Usuario no encontrado)',
+            'email' => '-',
+            'idgrupo' => $idgrupo,
+            'curso' => $curso->fullname,
+            'fecha_oracle' => $fechaOracle,
+            'fecha_proceso' => date('Y-m-d H:i:s'),
+            'estado' => 'Error: usuario no encontrado'
+        ];
+        return false;
+    }
 
+    // Si no es modo prueba, aplicar cambios en Moodle
     if (!$modoPrueba) {
         $context = context_course::instance($curso->id);
+
+        // Quitar rol de estudiante
         $DB->delete_records('role_assignments', [
             'userid' => $user->id,
             'contextid' => $context->id,
             'roleid' => ROL_ESTUDIANTE
         ]);
 
+        // Asignar rol "desmatriculado"
         $role_assign = (object)[
             'roleid' => ROL_DESMATRICULADO,
             'contextid' => $context->id,
@@ -229,15 +273,29 @@ function procesarCancelacion($registro, $modoPrueba, &$resumen) {
         ];
         $DB->insert_record('role_assignments', $role_assign);
 
+        // Registrar en log interno
         registrarProcesado($idgrupo, $username, TIPO_CANCELACION, $fechaOracle);
+
+        // Notificaciones
         enviarCorreoCancelacionEstudiante($user, $curso);
         enviarCorreoCancelacionDocente($user, $curso);
     }
 
-    $resumen[] = "Cancelación procesada - $username en $idgrupo";
+    // Agregar al resumen para reporte
+    $resumen[] = [
+        'tipo' => 'Cancelación',
+        'username' => $username,
+        'nombre' => $user->firstname . ' ' . $user->lastname,
+        'email' => $user->email,
+        'idgrupo' => $idgrupo,
+        'curso' => $curso->fullname,
+        'fecha_oracle' => $fechaOracle,
+        'fecha_proceso' => date('Y-m-d H:i:s'),
+        'estado' => $modoPrueba ? 'Simulado (modo prueba)' : 'Procesado OK'
+    ];
+
     return true;
 }
-
 function procesarAdicion($registro, $modoPrueba, &$resumen) {
     global $DB;
 
@@ -246,15 +304,50 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
     $fechaOracle = $registro['FECHACREACION'];
 
     if (yaProcesado($idgrupo, $username, TIPO_ADICION, $fechaOracle)) {
+        $resumen[] = [
+            'tipo' => 'Adición',
+            'username' => $username,
+            'nombre' => '-',
+            'email' => '-',
+            'idgrupo' => $idgrupo,
+            'curso' => '-',
+            'fecha_oracle' => $fechaOracle,
+            'fecha_proceso' => date('Y-m-d H:i:s'),
+            'estado' => 'Ya procesado'
+        ];
         return false;
     }
 
     $curso = $DB->get_record('course', ['summary' => $idgrupo], 'id,fullname');
-    if (!$curso) return false;
+    if (!$curso) {
+        $resumen[] = [
+            'tipo' => 'Adición',
+            'username' => $username,
+            'nombre' => '-',
+            'email' => '-',
+            'idgrupo' => $idgrupo,
+            'curso' => '(Curso no encontrado)',
+            'fecha_oracle' => $fechaOracle,
+            'fecha_proceso' => date('Y-m-d H:i:s'),
+            'estado' => 'Error: curso no encontrado'
+        ];
+        return false;
+    }
 
     $user = $DB->get_record('user', ['username' => $username]);
     if (!$user) {
         enviarCorreoUsuarioNoExiste($username, $idgrupo);
+        $resumen[] = [
+            'tipo' => 'Adición',
+            'username' => $username,
+            'nombre' => '(Usuario no encontrado)',
+            'email' => '-',
+            'idgrupo' => $idgrupo,
+            'curso' => $curso->fullname,
+            'fecha_oracle' => $fechaOracle,
+            'fecha_proceso' => date('Y-m-d H:i:s'),
+            'estado' => 'Error: usuario no encontrado'
+        ];
         return false;
     }
 
@@ -263,6 +356,7 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
 
         if (!$DB->record_exists('user_enrolments', ['userid' => $user->id, 'enrolid' => $enrol->id])) {
             $context = context_course::instance($curso->id);
+
             $DB->insert_record('role_assignments', (object)[
                 'roleid' => ROL_ESTUDIANTE,
                 'contextid' => $context->id,
@@ -270,6 +364,7 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
                 'timemodified' => time(),
                 'modifierid' => 2
             ]);
+
             $DB->insert_record('user_enrolments', (object)[
                 'status' => 0,
                 'enrolid' => $enrol->id,
@@ -284,7 +379,18 @@ function procesarAdicion($registro, $modoPrueba, &$resumen) {
         enviarCorreoAdicionEstudiante($user, $curso);
     }
 
-    $resumen[] = "Adición procesada - $username en $idgrupo";
+    $resumen[] = [
+        'tipo' => 'Adición',
+        'username' => $username,
+        'nombre' => $user->firstname . ' ' . $user->lastname,
+        'email' => $user->email,
+        'idgrupo' => $idgrupo,
+        'curso' => $curso->fullname,
+        'fecha_oracle' => $fechaOracle,
+        'fecha_proceso' => date('Y-m-d H:i:s'),
+        'estado' => $modoPrueba ? 'Simulado (modo prueba)' : 'Procesado OK'
+    ];
+
     return true;
 }
 
@@ -294,6 +400,17 @@ function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
     $fechaOracle = $registro['FECHACREACION'];
 
     if (yaProcesado($idgrupo, $username, TIPO_CAMBIO_GRUPO, $fechaOracle)) {
+        $resumen[] = [
+            'tipo' => 'Cambio de grupo',
+            'username' => $username,
+            'nombre' => $registro['NOMBRES'] . ' ' . $registro['APELLIDOS'],
+            'email' => '-',
+            'idgrupo' => $idgrupo,
+            'curso' => $registro['NOMBREASIGNATURA'] ?? '-',
+            'fecha_oracle' => $fechaOracle,
+            'fecha_proceso' => date('Y-m-d H:i:s'),
+            'estado' => 'Ya procesado'
+        ];
         return false;
     }
 
@@ -302,9 +419,21 @@ function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
         enviarCorreoCambioGrupo($registro);
     }
 
-    $resumen[] = "Cambio de grupo reportado - $username en $idgrupo";
+    $resumen[] = [
+        'tipo' => 'Cambio de grupo',
+        'username' => $username,
+        'nombre' => $registro['NOMBRES'] . ' ' . $registro['APELLIDOS'],
+        'email' => '-', // no siempre disponible en registro Oracle
+        'idgrupo' => $idgrupo,
+        'curso' => $registro['NOMBREASIGNATURA'] ?? '-',
+        'fecha_oracle' => $fechaOracle,
+        'fecha_proceso' => date('Y-m-d H:i:s'),
+        'estado' => $modoPrueba ? 'Simulado (modo prueba)' : 'Reportado'
+    ];
+
     return true;
 }
+
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
@@ -348,7 +477,17 @@ function enviarCorreoConAdjunto($to, $subject, $message, $filePath, $fileName) {
 function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     // Si no hubo registros, añadimos una línea mínima al resumen
     if (empty($resumen)) {
-        $resumen[] = "No se encontraron registros en este rango.";
+        $resumen[] = [
+            'tipo' => '-',
+            'username' => '-',
+            'nombre' => '-',
+            'email' => '-',
+            'idgrupo' => '-',
+            'curso' => '-',
+            'fecha_oracle' => '-',
+            'fecha_proceso' => date('Y-m-d H:i:s'),
+            'estado' => 'No se encontraron registros en este rango.'
+        ];
     }
 
     $subject = ($modoPrueba ? "[PRUEBA] " : "")."Reporte de Adiciones/Cancelaciones - ".date('Y-m-d H:i:s');
@@ -358,7 +497,12 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
                "Adiciones: {$resultados['adiciones']}\n".
                "Cambios de grupo: {$resultados['cambios_grupo']}\n".
                "Errores: {$resultados['errores']}\n\n".
-               "Detalles:\n".implode("\n", $resumen);
+               "Detalles:\n";
+
+    // Construir el detalle para el cuerpo del correo
+    foreach ($resumen as $r) {
+        $message .= "- {$r['tipo']} {$r['username']} en {$r['idgrupo']} ({$r['curso']}) Estado: {$r['estado']}\n";
+    }
 
     // archivo CSV temporal
     $csvFileName = tempnam(sys_get_temp_dir(), 'reporte_').'.csv';
@@ -370,10 +514,19 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
         'ID Grupo', 'Asignatura', 'Fecha Oracle', 'Fecha Proceso', 'Estado'
     ], ';');
 
-    // recorrer los detalles del resumen
-    foreach ($resumen as $linea) {
-        // cada línea se guarda como fila en el CSV en una sola columna
-        fputcsv($csvFile, [$linea], ';');
+    // recorrer los detalles del resumen y escribir en CSV
+    foreach ($resumen as $r) {
+        fputcsv($csvFile, [
+            $r['tipo'],
+            $r['username'],
+            $r['nombre'],
+            $r['email'],
+            $r['idgrupo'],
+            $r['curso'],
+            $r['fecha_oracle'],
+            $r['fecha_proceso'],
+            $r['estado']
+        ], ';');
     }
 
     fclose($csvFile);
@@ -385,6 +538,7 @@ function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     // borrar el archivo temporal
     unlink($csvFileName);
 }
+
 //===========================================================
 // EJECUCIÓN PRINCIPAL
 // =============================================================================
