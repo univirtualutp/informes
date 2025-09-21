@@ -96,7 +96,7 @@ function limpiarRegistrosAntiguos() {
 function enviarCorreoCancelacionEstudiante($user, $curso) {
     $subject = "Cancelación de asignatura - {$curso->fullname}";
     $message = "Estimado/a {$user->firstname} {$user->lastname},\n\n".
-               "Tu matrícula en {$curso->fullname} ha sido cancelada.\n\n".
+               "se ha procesado la accion: {$curso->fullname} ha sido cancelada por usted.\n\n".
                "Si es un error, contacta a soporte.\n\n".
                "Atentamente,\nUnivirtual UTP";
     enviarCorreo($user->email, $subject, $message);
