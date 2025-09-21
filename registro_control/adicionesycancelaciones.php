@@ -395,10 +395,6 @@ try {
         // Enviar reporte final al terminar
     enviarReporteFinal($resultados, $modoPrueba, $resumen);
 
-    // Guardar última fecha procesada
-    file_put_contents(LAST_RUN_FILE, date('Y-m-d H:i:s'));
-    echo "Fecha de última ejecución registrada: ".date('Y-m-d H:i:s')."\n";
-
 
     // Guardar última fecha procesada
     file_put_contents(LAST_RUN_FILE, date('Y-m-d H:i:s'));
