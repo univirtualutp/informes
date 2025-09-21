@@ -316,13 +316,13 @@ function enviarCorreoConAdjunto($to, $subject, $message, $filePath, $fileName) {
         $mail->isSMTP();
         $mail->Host = 'smtp.gmail.com';
         $mail->SMTPAuth = true;
-        $mail->Username = 'TU_CORREO@gmail.com';     // ⚠️ tu correo Gmail
-        $mail->Password = 'TU_CONTRASENIA_APP';      // ⚠️ tu contraseña de aplicación
+        $mail->Username = 'univirtual@utp.edu.co';     // ⚠️ tu correo Gmail
+        $mail->Password = 'fzti zzyv xhma melo';      // ⚠️ tu contraseña de aplicación
         $mail->SMTPSecure = 'tls';
         $mail->Port = 587;
 
         // Remitente
-        $mail->setFrom('TU_CORREO@gmail.com', 'Univirtual UTP');
+        $mail->setFrom('univirtual@utp.edu.co', 'Univirtual UTP');
 
         // Destinatario
         $mail->addAddress($to);
