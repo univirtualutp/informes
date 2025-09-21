@@ -305,6 +305,46 @@ function procesarCambioGrupo($registro, $modoPrueba, &$resumen) {
     $resumen[] = "Cambio de grupo reportado - $username en $idgrupo";
     return true;
 }
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+
+function enviarCorreoConAdjunto($to, $subject, $message, $filePath, $fileName) {
+    $mail = new PHPMailer(true);
+
+    try {
+        // Configuración del servidor SMTP (Gmail)
+        $mail->isSMTP();
+        $mail->Host = 'smtp.gmail.com';
+        $mail->SMTPAuth = true;
+        $mail->Username = 'TU_CORREO@gmail.com';     // ⚠️ tu correo Gmail
+        $mail->Password = 'TU_CONTRASENIA_APP';      // ⚠️ tu contraseña de aplicación
+        $mail->SMTPSecure = 'tls';
+        $mail->Port = 587;
+
+        // Remitente
+        $mail->setFrom('TU_CORREO@gmail.com', 'Univirtual UTP');
+
+        // Destinatario
+        $mail->addAddress($to);
+
+        // Contenido
+        $mail->isHTML(false);
+        $mail->Subject = $subject;
+        $mail->Body    = $message;
+
+        // Adjuntar archivo si existe
+        if ($filePath && file_exists($filePath)) {
+            $mail->addAttachment($filePath, $fileName);
+        }
+
+        $mail->send();
+        echo "Correo enviado a $to\n";
+        return true;
+    } catch (Exception $e) {
+        echo "Error enviando correo a $to: {$mail->ErrorInfo}\n";
+        return false;
+    }
+}
 function enviarReporteFinal($resultados, $modoPrueba, $resumen) {
     // Si no hubo registros, añadimos una línea mínima al resumen
     if (empty($resumen)) {
