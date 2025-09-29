@@ -9,7 +9,7 @@ $host = 'localhost';
 $dbname = 'moodle';
 $user = 'moodle';
 $pass = 'M00dl3';
-$correo_destino = ['soporteunivirtual@utp.edu.co', 'univirtual-utp@utp.edu.co'];
+$correo_destino = ['juapabgonzalez@utp.edu.co', 'univirtual-utp@utp.edu.co'];
 $correo_notificacion = 'soporteunivirtual@utp.edu.co';
 
 // Calcular fechas (martes a lunes)
