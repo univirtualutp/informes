@@ -18,7 +18,7 @@ $correo_notificacion = 'juapabgonzalez@utp.edu.co';
 $hoy = new DateTime();
 $lunes = clone $hoy;
 $lunes->modify('last monday');
-$fecha_inicio = new DateTime(date('Y') . '-03-25 00:00:00');
+$fecha_inicio = new DateTime(date('Y') . '-08-04 00:00:00');
 $fecha_fin = clone $lunes;
 $fecha_fin->setTime(23, 59, 59);
 
@@ -28,12 +28,12 @@ try {
 
     // Lista de grupos de cursos con nombres asociados
     $grupos_cursos = [
-    	'M1' => ['540'],
-        'M2' => ['541'],
-        'M3' => ['542'],
-        'M4' => ['543'],
-        'M5' => ['544'],
-        'M6' => ['545']
+    	'M1' => ['745'],
+        'M2' => ['746'],
+        'M3' => ['747'],
+        'M4' => ['748'],
+        'M5' => ['749'],
+        'M6' => ['750']
     ];
 
     // Parámetros para las consultas de tablas temporales

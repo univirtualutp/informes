@@ -18,7 +18,7 @@ $correo_notificacion = 'juapabgonzalez@utp.edu.co';
 $hoy = new DateTime();
 $lunes = clone $hoy;
 $lunes->modify('last monday');
-$fecha_inicio = new DateTime(date('Y') . '-02-22 00:00:00');
+$fecha_inicio = new DateTime(date('Y') . '-08-04 00:00:00');
 $fecha_fin = clone $lunes;
 $fecha_fin->setTime(23, 59, 59);
 
@@ -27,7 +27,7 @@ try {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     // Lista de cursos a reportar
-    $cursos = ['530']; 
+    $cursos = ['751']; 
 
     // Parámetros para las consultas de tablas temporales
     $params = [

@@ -12,8 +12,8 @@ $pass = 'M00dl3';
 $correo_destino = ['juapabgonzalez@utp.edu.co', 'univirtual-utp@utp.edu.co'];
 $correo_notificacion = 'juapabgonzalez@utp.edu.co';
 
-// Calcular fechas: inicio fijo el 25 de marzo de 2025, fin el lunes más reciente
-$fecha_inicio_fija = new DateTime('2025-03-25'); 
+// Calcular fechas: inicio fijo el 25 de agosto de 2025, fin el lunes más reciente
+$fecha_inicio_fija = new DateTime('2025-08-04'); 
 $hoy = new DateTime(); // Fecha actual
 
 // Calcular el lunes más reciente
@@ -143,7 +143,7 @@ try {
     LEFT JOIN UltimoMensaje um ON um.userid = u.id
     WHERE mc.contextlevel = 50
       AND u.username <> '12345678'
-      AND c.id IN ('540','541','542','543','544','545')
+      AND c.id IN ('745','746','747','748','749','750')
       AND r.id IN ('3','5')
     ORDER BY c.fullname, u.lastname, u.firstname;";
 

@@ -121,7 +121,7 @@ try {
     LEFT JOIN UltimoMensajeEnviado ume ON ume.userid = u.id
     WHERE mc.contextlevel = 50
       AND u.username <> '12345678'
-      AND c.id IN ('558')
+      AND c.id IN ('753')
       AND r.id IN ('3','5')
     ORDER BY c.fullname, u.lastname, u.firstname;";
 

@@ -15,7 +15,7 @@ $correo_notificacion = 'juapabgonzalez@utp.edu.co';
 $hoy = new DateTime();
 $lunes = clone $hoy;
 $lunes->modify('last monday');
-$fecha_inicio = new DateTime(date('Y') . '-04-17 00:00:00');
+$fecha_inicio = new DateTime(date('Y') . '-08-04 00:00:00');
 $fecha_fin = clone $lunes;
 $fecha_fin->setTime(23, 59, 59);
 
@@ -24,7 +24,7 @@ try {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     $grupos_cursos = [
-        'Excel_basico' => ['558'],
+        'Excel_basico' => ['753'],
         // 'Fundamentos_Quimica_biologia' => ['533','550'],
         // 'Introduccion_regencia' => ['532','552'],
         // 'Uso_herramientas_ofimatica' => ['534', '554']
