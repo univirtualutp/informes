@@ -30,7 +30,7 @@ global $DB, $CFG;
 
 define('EMAIL_SOPORTE', 'juapabgonzalez@utp.edu.co');
 define('EMAIL_SOPORTE_ADICIONAL', 'univirtual@utp.edu.co');
-//define('EMAIL_SOPORTE_RAMIREZ', 's.ramirez9@utp.edu.co');
+define('EMAIL_SOPORTE_RAMIREZ', 's.ramirez9@utp.edu.co');
 define('FROM_EMAIL', 'noreply@utp.edu.co');
 define('REGISTRO_PROCESADOS_FILE', __DIR__.'/procesados.log');
 define('LAST_RUN_FILE', __DIR__.'/last_run_regencia.txt'); // exclusivo de este script
